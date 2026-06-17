@@ -31,12 +31,20 @@ class JobHandle:
     job_id: int
     polling_url: str
     _http: HttpSession = field(repr=False)
-    # Set only for etl_export handles; None for import/validation handles.
-    _download_path: str | None = field(default=None, repr=False)
+    # True only for etl_export handles; guards result() usage.
+    _is_export: bool = field(default=False, repr=False)
+    # Populated from the poll response once the job reaches FINISHED.
+    # Live API returns: {"status": "FINISHED", "downloadUrl": "/orchestrator/jobs/downloadEtlExportedFile/{jobId}?..."}
+    _download_url: str | None = field(default=None, repr=False)
+
+    def _poll(self) -> dict[str, object]:
+        data: dict[str, object] = self._http.get(self.polling_url).json()
+        if url := data.get("downloadUrl"):
+            self._download_url = str(url)
+        return data
 
     def status(self) -> JobStatus:
-        response = self._http.get(self.polling_url)
-        return JobStatus(response.json()["status"])
+        return JobStatus(self._poll()["status"])
 
     def wait(
         self,
@@ -46,7 +54,8 @@ class JobHandle:
     ) -> "JobHandle":
         deadline = time.monotonic() + timeout if timeout is not None else None
         while True:
-            current = self.status()
+            data = self._poll()
+            current = JobStatus(data["status"])
             if current.is_terminal:
                 if not current.is_successful:
                     raise JobFailedError(self.job_id, current.value)
@@ -61,8 +70,9 @@ class JobHandle:
         poll_interval: float = 5.0,
         timeout: float | None = None,
     ) -> bytes:
-        if self._download_path is None:
+        if not self._is_export:
             raise TypeError("result() is only valid on export handles returned by etl_export()")
         self.wait(poll_interval=poll_interval, timeout=timeout)
-        # TODO: verify /orchestrator/jobs/download/{jobId} against the live API
-        return self._http.get(self._download_path).content
+        if self._download_url is None:
+            raise RuntimeError("Export FINISHED but poll response contained no downloadUrl")
+        return self._http.get(self._download_url).content

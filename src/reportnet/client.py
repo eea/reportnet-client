@@ -112,13 +112,14 @@ class ReportnetClient:
 
         response = self._http.get(f"/dataset/v4/etlExport/{dataset_id}", params=params)
         data = response.json()
-        job_id = data.get("jobId") or _extract_job_id(data["pollingUrl"])
-        # TODO: verify download URL shape against the live API
+        job_id = data.get("jobId") or _extract_job_id(str(data["pollingUrl"]))
+        # downloadUrl is not known yet — the poll response supplies it when FINISHED:
+        # {"status": "FINISHED", "downloadUrl": "/orchestrator/jobs/downloadEtlExportedFile/{jobId}?..."}
         return JobHandle(
-            job_id=job_id,
-            polling_url=data["pollingUrl"],
+            job_id=int(job_id),  # type: ignore[arg-type]
+            polling_url=str(data["pollingUrl"]),
             _http=self._http,
-            _download_path=f"/orchestrator/jobs/download/{job_id}",
+            _is_export=True,
         )
 
     def export_file(
@@ -201,6 +202,25 @@ class ReportnetClient:
         return self._get_validations(
             f"/validation/listGroupValidationsDL/{dataset_id}", dataflow_id, provider_id
         )
+
+    def download_validation_snapshot(
+        self,
+        *,
+        snapshot_id: int,
+        dataset_id: int,
+        dataflow_id: int,
+        provider_id: int,
+    ) -> bytes:
+        """GET /downloadValidation/{snapshotId} — validation results for a release snapshot as CSV."""
+        response = self._http.get(
+            f"/downloadValidation/{snapshot_id}",
+            params={
+                "datasetId": dataset_id,
+                "dataflowId": dataflow_id,
+                "providerId": provider_id,
+            },
+        )
+        return response.content
 
     def set_reference_dataset_updatable(
         self,

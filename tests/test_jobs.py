@@ -10,8 +10,8 @@ from reportnet.models import JobHandle
 POLLING_URL = "/orchestrator/jobs/pollForJobStatus/1?datasetId=1&dataflowId=2"
 
 
-def _handle(client, download_path=None):
-    return JobHandle(job_id=1, polling_url=POLLING_URL, _http=client._http, _download_path=download_path)
+def _handle(client):
+    return JobHandle(job_id=1, polling_url=POLLING_URL, _http=client._http)
 
 
 def test_status_finished(mock_router, client):
