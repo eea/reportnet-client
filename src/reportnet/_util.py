@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import io
+import zipfile
 from pathlib import Path
-from typing import IO, Union
+from typing import IO, Any, Union
 
 
 def to_file_tuple(
@@ -44,3 +45,42 @@ def to_file_tuple(
     buf = io.BytesIO()
     native.to_csv(buf, index=False)
     return filename or "upload.csv", buf.getvalue()
+
+
+def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
+    """Unzip a ZIP of CSVs and return a dict of DataFrames keyed by table name.
+
+    Requires polars or pandas (``pip install reportnet[dataframe]``).
+    Tries polars first; falls back to pandas if polars is not installed.
+    """
+    try:
+        import polars as pl  # type: ignore[import]
+
+        def _read(data: bytes) -> Any:
+            return pl.read_csv(io.BytesIO(data))
+
+    except ImportError:
+        try:
+            import pandas as pd  # type: ignore[import]
+
+            def _read(data: bytes) -> Any:
+                return pd.read_csv(io.BytesIO(data))
+
+        except ImportError:
+            raise ImportError(
+                "polars or pandas is required to read DataFrames; "
+                "install with: pip install reportnet[dataframe]"
+            ) from None
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        return {
+            _table_name(name): _read(zf.read(name))
+            for name in zf.namelist()
+            if name.lower().endswith(".csv")
+        }
+
+
+def _table_name(path: str) -> str:
+    """'some/path/TableName.csv' → 'TableName'"""
+    leaf = path.rsplit("/", 1)[-1]
+    return leaf[:-4] if leaf.lower().endswith(".csv") else leaf

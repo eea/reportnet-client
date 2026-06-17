@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable
 
 from ._http import HttpSession
 from .exceptions import JobFailedError, JobTimeoutError
@@ -87,3 +87,21 @@ class JobHandle:
         if self._download_url is None:
             raise RuntimeError("Export FINISHED but poll response contained no downloadUrl")
         return self._http.get(self._download_url).content
+
+    def to_frames(
+        self,
+        *,
+        poll_interval: float = 5.0,
+        timeout: float | None = None,
+        on_status: Callable[[JobStatus], None] | None = None,
+    ) -> dict[str, Any]:
+        """Wait for an export job and return its CSVs as DataFrames.
+
+        Returns a dict keyed by table name (filename without .csv extension).
+        Requires polars or pandas (``pip install reportnet[dataframe]``).
+        """
+        from ._util import zip_to_frames
+
+        return zip_to_frames(
+            self.result(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
+        )
