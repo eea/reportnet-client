@@ -10,8 +10,8 @@ from reportnet.models import JobHandle
 POLLING_URL = "/orchestrator/jobs/pollForJobStatus/1?datasetId=1&dataflowId=2"
 
 
-def _handle(client):
-    return JobHandle(job_id=1, polling_url=POLLING_URL, _http=client._http)
+def _handle(client, *, provider_id: int | None = None):
+    return JobHandle(job_id=1, polling_url=POLLING_URL, _http=client._http, _provider_id=provider_id)
 
 
 def test_status_finished(mock_router, client):
@@ -60,6 +60,35 @@ def test_wait_raises_timeout(mock_router, client):
     with patch("time.sleep"), pytest.raises(JobTimeoutError) as exc_info:
         _handle(client).wait(poll_interval=0, timeout=0.001)
     assert exc_info.value.job_id == 1
+
+
+def test_wait_calls_on_status_callback(mock_router, client):
+    mock_router.get("/orchestrator/jobs/pollForJobStatus/1").mock(
+        side_effect=[
+            httpx.Response(200, json={"status": "IN_PROGRESS"}),
+            httpx.Response(200, json={"status": "FINISHED"}),
+        ]
+    )
+    seen: list[JobStatus] = []
+    with patch("time.sleep"):
+        _handle(client).wait(poll_interval=0, on_status=seen.append)
+    assert seen == [JobStatus.IN_PROGRESS, JobStatus.FINISHED]
+
+
+def test_poll_injects_provider_id_in_url(mock_router, client):
+    route = mock_router.get("/orchestrator/jobs/pollForJobStatus/1").mock(
+        return_value=httpx.Response(200, json={"status": "FINISHED"})
+    )
+    _handle(client, provider_id=42).status()
+    assert "providerId=42" in str(route.calls[0].request.url)
+
+
+def test_poll_skips_provider_id_when_not_set(mock_router, client):
+    route = mock_router.get("/orchestrator/jobs/pollForJobStatus/1").mock(
+        return_value=httpx.Response(200, json={"status": "FINISHED"})
+    )
+    _handle(client).status()
+    assert "providerId" not in str(route.calls[0].request.url)
 
 
 @pytest.mark.parametrize(

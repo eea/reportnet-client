@@ -28,6 +28,16 @@ class ReportnetClient:
         from .keychain import get_key
         return cls(api_key=get_key(dataflow_id), base_url=base_url, timeout=timeout)
 
+    def for_dataflow(
+        self,
+        dataflow_id: int,
+        *,
+        provider_id: int | None = None,
+    ) -> "DataflowClient":
+        """Return a DataflowClient that pre-fills dataflow_id (and optionally provider_id)."""
+        from .dataflow import DataflowClient
+        return DataflowClient(self, dataflow_id=dataflow_id, provider_id=provider_id)
+
     def close(self) -> None:
         self._http.close()
 
@@ -71,7 +81,7 @@ class ReportnetClient:
             params=params,
             files={"file": (name, content)},
         )
-        return _make_job(response.json(), self._http)
+        return _make_job(response.json(), self._http, provider_id=provider_id)
 
     def etl_import(
         self,
@@ -99,8 +109,9 @@ class ReportnetClient:
         provider_id: int | None = None,
         table_schema_id: str | None = None,
         include_attachments: bool = False,
+        version: int = 4,
     ) -> JobHandle:
-        """GET /dataset/v4/etlExport/{datasetId} — async, result is a ZIP of CSVs."""
+        """GET /dataset/v{version}/etlExport/{datasetId} — async, result is a ZIP of CSVs."""
         params: dict[str, object] = {
             "dataflowId": dataflow_id,
             "includeAttachments": str(include_attachments).lower(),
@@ -110,17 +121,8 @@ class ReportnetClient:
         if table_schema_id is not None:
             params["tableSchemaId"] = table_schema_id
 
-        response = self._http.get(f"/dataset/v4/etlExport/{dataset_id}", params=params)
-        data = response.json()
-        job_id = data.get("jobId") or _extract_job_id(str(data["pollingUrl"]))
-        # downloadUrl is not known yet — the poll response supplies it when FINISHED:
-        # {"status": "FINISHED", "downloadUrl": "/orchestrator/jobs/downloadEtlExportedFile/{jobId}?..."}
-        return JobHandle(
-            job_id=int(job_id),  # type: ignore[arg-type]
-            polling_url=str(data["pollingUrl"]),
-            _http=self._http,
-            _is_export=True,
-        )
+        response = self._http.get(f"/dataset/v{version}/etlExport/{dataset_id}", params=params)
+        return _make_job(response.json(), self._http, is_export=True, provider_id=provider_id)
 
     def export_file(
         self,
@@ -129,8 +131,8 @@ class ReportnetClient:
         table_schema_id: str,
         mime_type: Literal["csv", "xlsx"] = "csv",
         filters: dict[str, object] | None = None,
-    ) -> bytes:
-        """POST /dataset/exportFile — synchronous table export."""
+    ) -> JobHandle:
+        """POST /dataset/exportFile — async single-table export."""
         response = self._http.post(
             "/dataset/exportFile",
             params={
@@ -140,7 +142,7 @@ class ReportnetClient:
             },
             json=filters or {},
         )
-        return response.content
+        return _make_job(response.json(), self._http, is_export=True)
 
     def export_file_dl(
         self,
@@ -148,8 +150,8 @@ class ReportnetClient:
         dataset_id: int,
         table_schema_id: str,
         filters: dict[str, object] | None = None,
-    ) -> bytes:
-        """POST /dataset/exportFileDL — synchronous table export, BigData variant."""
+    ) -> JobHandle:
+        """POST /dataset/exportFileDL — async single-table export, BigData variant."""
         response = self._http.post(
             "/dataset/exportFileDL",
             params={
@@ -159,7 +161,38 @@ class ReportnetClient:
             },
             json=filters or {},
         )
-        return response.content
+        return _make_job(response.json(), self._http, is_export=True)
+
+    def export_dataset_file(
+        self,
+        *,
+        dataset_id: int,
+        mime_type: Literal["csv", "xlsx", "zip"] = "csv",
+    ) -> JobHandle:
+        """GET /dataset/exportDatasetFile — async whole-dataset export (all tables)."""
+        response = self._http.get(
+            "/dataset/exportDatasetFile",
+            params={
+                "datasetId": dataset_id,
+                "mimeType": mime_type,
+            },
+        )
+        return _make_job(response.json(), self._http, is_export=True)
+
+    def export_dataset_file_dl(
+        self,
+        *,
+        dataset_id: int,
+    ) -> JobHandle:
+        """GET /dataset/exportDatasetFileDL — async whole-dataset export, BigData datalake variant."""
+        response = self._http.get(
+            "/dataset/exportDatasetFileDL",
+            params={
+                "datasetId": dataset_id,
+                "mimeType": "zip",
+            },
+        )
+        return _make_job(response.json(), self._http, is_export=True)
 
     # ── Validation ────────────────────────────────────────────────────────────
 
@@ -177,7 +210,7 @@ class ReportnetClient:
         response = self._http.put(
             f"/orchestrator/jobs/addValidationJob/{dataset_id}", params=params
         )
-        return _make_job(response.json(), self._http)
+        return _make_job(response.json(), self._http, provider_id=provider_id)
 
     def list_group_validations(
         self,
@@ -245,9 +278,21 @@ class ReportnetClient:
         return response.json()  # type: ignore[no-any-return]
 
 
-def _make_job(data: dict[str, object], http: HttpSession) -> JobHandle:
+def _make_job(
+    data: dict[str, object],
+    http: HttpSession,
+    *,
+    provider_id: int | None = None,
+    is_export: bool = False,
+) -> JobHandle:
     job_id = data.get("jobId") or _extract_job_id(str(data["pollingUrl"]))
-    return JobHandle(job_id=int(job_id), polling_url=str(data["pollingUrl"]), _http=http)  # type: ignore[arg-type]
+    return JobHandle(
+        job_id=int(job_id),  # type: ignore[arg-type]
+        polling_url=str(data["pollingUrl"]),
+        _http=http,
+        _is_export=is_export,
+        _provider_id=provider_id,
+    )
 
 
 def _extract_job_id(polling_url: str) -> int:

@@ -16,6 +16,11 @@ class AuthError(APIError):
     pass
 
 
+class RateLimitError(APIError):
+    """Raised on HTTP 429 Too Many Requests."""
+    pass
+
+
 class JobFailedError(ReportnetError):
     def __init__(self, job_id: int, status: str) -> None:
         self.job_id = job_id
