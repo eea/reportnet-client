@@ -9,6 +9,104 @@ from ._http import HttpSession
 from .exceptions import JobFailedError, JobTimeoutError
 
 
+# ── Schema models ─────────────────────────────────────────────────────────────
+
+class FieldType(str, Enum):
+    TEXT = "TEXT"
+    NUMBER_INTEGER = "NUMBER_INTEGER"
+    NUMBER_DECIMAL = "NUMBER_DECIMAL"
+    DATE = "DATE"
+    DATETIME = "DATETIME"
+    BOOLEAN = "BOOLEAN"
+    CODELIST = "CODELIST"
+    MULTISELECT_CODELIST = "MULTISELECT_CODELIST"
+    LINK = "LINK"
+    MULTISELECT_LINK = "MULTISELECT_LINK"
+    ATTACHMENT = "ATTACHMENT"
+    COORDINATE_LAT = "COORDINATE_LAT"
+    COORDINATE_LONG = "COORDINATE_LONG"
+    POINT = "POINT"
+    LINESTRING = "LINESTRING"
+    POLYGON = "POLYGON"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "FieldType":
+        # Pass unknown types through as opaque strings rather than raising.
+        unknown = str.__new__(cls, str(value))
+        unknown._value_ = str(value)
+        unknown._name_ = str(value)
+        return unknown
+
+
+@dataclass(frozen=True)
+class FieldSchema:
+    id: str
+    name: str
+    type: FieldType
+    description: str
+    required: bool
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "FieldSchema":
+        return cls(
+            id=d["id"],
+            name=d["name"],
+            type=FieldType(d.get("type", "TEXT")),
+            description=d.get("description") or "",
+            required=bool(d.get("required", False)),
+        )
+
+
+@dataclass(frozen=True)
+class TableSchema:
+    id: str
+    name: str
+    description: str
+    fields: tuple[FieldSchema, ...]
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "TableSchema":
+        raw_fields = d.get("recordSchema", {}).get("fieldSchema", [])
+        return cls(
+            id=d["idTableSchema"],
+            name=d["nameTableSchema"],
+            description=d.get("description") or "",
+            fields=tuple(FieldSchema.from_dict(f) for f in raw_fields),
+        )
+
+    def required_columns(self) -> list[str]:
+        """Names of fields that are required for import."""
+        return [f.name for f in self.fields if f.required]
+
+    def column_names(self) -> list[str]:
+        """All field names in schema order."""
+        return [f.name for f in self.fields]
+
+
+@dataclass(frozen=True)
+class DatasetSchema:
+    id: str
+    name: str
+    description: str
+    tables: tuple[TableSchema, ...]
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "DatasetSchema":
+        return cls(
+            id=d["idDataSetSchema"],
+            name=d["nameDatasetSchema"],
+            description=d.get("description") or "",
+            tables=tuple(TableSchema.from_dict(t) for t in d.get("tableSchemas", [])),
+        )
+
+    def table(self, name: str) -> TableSchema:
+        """Return the TableSchema with the given name, or raise KeyError."""
+        for t in self.tables:
+            if t.name == name:
+                return t
+        raise KeyError(f"No table named {name!r}; available: {[t.name for t in self.tables]}")
+
+
 class JobStatus(str, Enum):
     QUEUED = "QUEUED"
     IN_PROGRESS = "IN_PROGRESS"

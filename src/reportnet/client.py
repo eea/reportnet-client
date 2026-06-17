@@ -5,7 +5,7 @@ from typing import IO, Literal, Union
 
 from ._http import HttpSession
 from ._util import to_file_tuple
-from .models import JobHandle
+from .models import DatasetSchema, JobHandle
 
 
 class ReportnetClient:
@@ -263,6 +263,11 @@ class ReportnetClient:
             },
         )
         return response.content
+
+    def get_schema(self, *, dataset_id: int) -> DatasetSchema:
+        """GET /dataschema/v1/datasetId/{datasetId} — table and field definitions."""
+        response = self._http.get(f"/dataschema/v1/datasetId/{dataset_id}")
+        return DatasetSchema.from_dict(response.json())
 
     def set_reference_dataset_updatable(
         self,

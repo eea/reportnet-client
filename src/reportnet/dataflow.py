@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Literal, Union
 
-from .models import JobHandle
+from .models import DatasetSchema, JobHandle
 
 if TYPE_CHECKING:
     from .client import ReportnetClient
@@ -194,6 +194,9 @@ class DataflowClient:
             dataflow_id=self._dataflow_id,
             provider_id=pid,
         )
+
+    def get_schema(self, *, dataset_id: int) -> DatasetSchema:
+        return self._client.get_schema(dataset_id=dataset_id)
 
     def set_reference_dataset_updatable(
         self,
