@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import IO, Literal, Union
+
+from ._http import HttpSession
+from ._util import to_file_tuple
+from .models import JobHandle
+
+
+class ReportnetClient:
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.reportnet.europa.eu",
+        timeout: float = 30.0,
+    ) -> None:
+        self._http = HttpSession(api_key=api_key, base_url=base_url, timeout=timeout)
+
+    def close(self) -> None:
+        self._http.close()
+
+    def __enter__(self) -> "ReportnetClient":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    # ── Import ────────────────────────────────────────────────────────────────
+
+    def import_file(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+        file: Union[str, Path, bytes, IO[bytes], object],
+        filename: str | None = None,
+        provider_id: int | None = None,
+        table_schema_id: str | None = None,
+        replace: bool = False,
+        delimiter: str = "|",
+        integration_id: int | None = None,
+    ) -> JobHandle:
+        """POST /dataset/v2/importFileData/{datasetId} — multipart upload."""
+        name, content = to_file_tuple(file, filename)
+        params: dict[str, object] = {
+            "dataflowId": dataflow_id,
+            "replace": str(replace).lower(),
+            "delimiter": delimiter,
+        }
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        if table_schema_id is not None:
+            params["tableSchemaId"] = table_schema_id
+        if integration_id is not None:
+            params["integrationId"] = integration_id
+
+        response = self._http.post(
+            f"/dataset/v2/importFileData/{dataset_id}",
+            params=params,
+            files={"file": (name, content)},
+        )
+        return _make_job(response.json(), self._http)
+
+    def etl_import(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+        tables: list[dict[str, object]],
+        replace_data: bool = False,
+    ) -> JobHandle:
+        """POST /dataset/v1/{datasetId}/etlImport — JSON body, Citus datasets only."""
+        response = self._http.post(
+            f"/dataset/v1/{dataset_id}/etlImport",
+            params={"dataflowId": dataflow_id, "replaceData": str(replace_data).lower()},
+            json={"tables": tables},
+        )
+        return _make_job(response.json(), self._http)
+
+    # ── Export ────────────────────────────────────────────────────────────────
+
+    def etl_export(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+        provider_id: int | None = None,
+        table_schema_id: str | None = None,
+        include_attachments: bool = False,
+    ) -> JobHandle:
+        """GET /dataset/v4/etlExport/{datasetId} — async, result is a ZIP of CSVs."""
+        params: dict[str, object] = {
+            "dataflowId": dataflow_id,
+            "includeAttachments": str(include_attachments).lower(),
+        }
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        if table_schema_id is not None:
+            params["tableSchemaId"] = table_schema_id
+
+        response = self._http.get(f"/dataset/v4/etlExport/{dataset_id}", params=params)
+        data = response.json()
+        job_id = data.get("jobId") or _extract_job_id(data["pollingUrl"])
+        # TODO: verify download URL shape against the live API
+        return JobHandle(
+            job_id=job_id,
+            polling_url=data["pollingUrl"],
+            _http=self._http,
+            _download_path=f"/orchestrator/jobs/download/{job_id}",
+        )
+
+    def export_file(
+        self,
+        *,
+        dataset_id: int,
+        table_schema_id: str,
+        mime_type: Literal["csv", "xlsx"] = "csv",
+        filters: dict[str, object] | None = None,
+    ) -> bytes:
+        """POST /dataset/exportFile — synchronous table export."""
+        response = self._http.post(
+            "/dataset/exportFile",
+            params={
+                "datasetId": dataset_id,
+                "tableSchemaId": table_schema_id,
+                "mimeType": mime_type,
+            },
+            json=filters or {},
+        )
+        return response.content
+
+    def export_file_dl(
+        self,
+        *,
+        dataset_id: int,
+        table_schema_id: str,
+        filters: dict[str, object] | None = None,
+    ) -> bytes:
+        """POST /dataset/exportFileDL — synchronous table export, BigData variant."""
+        response = self._http.post(
+            "/dataset/exportFileDL",
+            params={
+                "datasetId": dataset_id,
+                "tableSchemaId": table_schema_id,
+                "mimeType": "csv",
+            },
+            json=filters or {},
+        )
+        return response.content
+
+    # ── Validation ────────────────────────────────────────────────────────────
+
+    def add_validation_job(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+        provider_id: int | None = None,
+    ) -> JobHandle:
+        """PUT /orchestrator/jobs/addValidationJob/{datasetId}."""
+        params: dict[str, object] = {"dataflowId": dataflow_id}
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        response = self._http.put(
+            f"/orchestrator/jobs/addValidationJob/{dataset_id}", params=params
+        )
+        return _make_job(response.json(), self._http)
+
+    def list_group_validations(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+        provider_id: int | None = None,
+    ) -> dict[str, object]:
+        """GET /validation/listGroupValidations/{datasetId} — Citus datasets."""
+        return self._get_validations(
+            f"/validation/listGroupValidations/{dataset_id}", dataflow_id, provider_id
+        )
+
+    def list_group_validations_dl(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+        provider_id: int | None = None,
+    ) -> dict[str, object]:
+        """GET /validation/listGroupValidationsDL/{datasetId} — BigData datasets."""
+        return self._get_validations(
+            f"/validation/listGroupValidationsDL/{dataset_id}", dataflow_id, provider_id
+        )
+
+    def set_reference_dataset_updatable(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+        updatable: bool,
+    ) -> None:
+        """PUT /referenceDataset/{datasetId} — lock or unlock a reference dataset."""
+        self._http.put(
+            f"/referenceDataset/{dataset_id}",
+            params={"dataflowId": dataflow_id, "updatable": str(updatable).lower()},
+        )
+
+    def _get_validations(
+        self, path: str, dataflow_id: int, provider_id: int | None
+    ) -> dict[str, object]:
+        params: dict[str, object] = {"dataflowId": dataflow_id}
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        response = self._http.get(path, params=params)
+        return response.json()  # type: ignore[no-any-return]
+
+
+def _make_job(data: dict[str, object], http: HttpSession) -> JobHandle:
+    job_id = data.get("jobId") or _extract_job_id(str(data["pollingUrl"]))
+    return JobHandle(job_id=int(job_id), polling_url=str(data["pollingUrl"]), _http=http)  # type: ignore[arg-type]
+
+
+def _extract_job_id(polling_url: str) -> int:
+    # /orchestrator/jobs/pollForJobStatus/{jobId}?datasetId=...
+    path = polling_url.split("?")[0]
+    return int(path.rstrip("/").rsplit("/", 1)[-1])
