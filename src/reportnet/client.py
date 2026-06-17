@@ -210,7 +210,16 @@ class ReportnetClient:
         response = self._http.put(
             f"/orchestrator/jobs/addValidationJob/{dataset_id}", params=params
         )
-        return _make_job(response.json(), self._http, provider_id=provider_id)
+        data = response.json()
+        # The API returns a bare integer job ID (not a dict with pollingUrl).
+        if isinstance(data, int):
+            return JobHandle(
+                job_id=data,
+                polling_url=_polling_url(data, dataset_id, dataflow_id, provider_id),
+                _http=self._http,
+                _provider_id=provider_id,
+            )
+        return _make_job(data, self._http, provider_id=provider_id)
 
     def list_group_validations(
         self,
@@ -293,6 +302,18 @@ def _make_job(
         _is_export=is_export,
         _provider_id=provider_id,
     )
+
+
+def _polling_url(
+    job_id: int, dataset_id: int, dataflow_id: int, provider_id: int | None = None
+) -> str:
+    url = (
+        f"/orchestrator/jobs/pollForJobStatus/{job_id}"
+        f"?datasetId={dataset_id}&dataflowId={dataflow_id}"
+    )
+    if provider_id is not None:
+        url += f"&providerId={provider_id}"
+    return url
 
 
 def _extract_job_id(polling_url: str) -> int:

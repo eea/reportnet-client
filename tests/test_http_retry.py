@@ -90,6 +90,17 @@ def test_raises_rate_limit_error_on_429(mock_router, client):
     assert exc_info.value.status_code == 429
 
 
+def test_raises_dataset_locked_error_on_423(mock_router, client):
+    from reportnet.exceptions import DatasetLockedError
+
+    mock_router.put("/orchestrator/jobs/addValidationJob/1").mock(
+        return_value=httpx.Response(423, text="Locked")
+    )
+    with pytest.raises(DatasetLockedError) as exc_info:
+        client.add_validation_job(dataset_id=1, dataflow_id=2)
+    assert exc_info.value.status_code == 423
+
+
 def test_sleep_is_called_between_retries(client):
     call_count = 0
 

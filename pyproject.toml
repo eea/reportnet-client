@@ -27,6 +27,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/reportnet"]
 
+[tool.pytest.ini_options]
+markers = ["integration: live API tests (require keyring credentials and network access)"]
+
 [tool.ruff]
 src = ["src"]
 line-length = 100

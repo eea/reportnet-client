@@ -21,6 +21,11 @@ class RateLimitError(APIError):
     pass
 
 
+class DatasetLockedError(APIError):
+    """Raised on HTTP 423 Locked — another job is already running on this dataset."""
+    pass
+
+
 class JobFailedError(ReportnetError):
     def __init__(self, job_id: int, status: str) -> None:
         self.job_id = job_id

@@ -5,7 +5,7 @@ import time
 
 import httpx
 
-from .exceptions import APIError, AuthError, RateLimitError
+from .exceptions import APIError, AuthError, DatasetLockedError, RateLimitError
 
 _RETRYABLE_5XX = frozenset({500, 502, 503, 504})
 _MAX_RETRIES = 3
@@ -66,6 +66,8 @@ class HttpSession:
 def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code in (401, 403):
         raise AuthError(response.status_code, response.text)
+    if response.status_code == 423:
+        raise DatasetLockedError(response.status_code, response.text)
     if response.status_code == 429:
         raise RateLimitError(response.status_code, response.text)
     if response.status_code >= 400:
