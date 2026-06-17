@@ -12,6 +12,8 @@ dependencies = ["httpx>=0.27"]
 [project.optional-dependencies]
 dataframe = ["narwhals>=1.0", "polars>=0.20"]
 keyring = ["keyring>=24"]
+
+[dependency-groups]
 dev = [
     "pytest>=8",
     "respx>=0.21",
