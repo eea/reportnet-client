@@ -104,29 +104,38 @@ def test_validation_job_and_results(df_1619):
 
 
 # ── Import test ────────────────────────────────────────────────────────────
-# To run the import test, set ENABLE_IMPORT_TEST = True.
-# Make sure the CSV matches the actual table schema — a mismatch will be
-# rejected by the API with a 400 or result in a FAILED job.
-# Use replace=False (default) to append rather than overwrite.
+# Table1a schema (derived from etl_export): 9 cols, comma-delimited.
+# table_schema_id comes from the URL tab fragment.
 
-ENABLE_IMPORT_TEST = False
+TABLE_SCHEMA_ID = "68dd41f045f9450001260da7"
 
-SAMPLE_CSV = b"""\
-country,value
-IE,1.2
-"""
 
-SAMPLE_TABLE_SCHEMA_ID: str | None = None  # set to e.g. "abc123def" if targeting a specific table
+def _generate_csv() -> bytes:
+    """Generate two rows of plausible Table1a data.
+
+    record_id is omitted — Reportnet assigns it on ingestion.
+    Pipe delimiter matches the API default.
+    """
+    rows = [
+        "category|scenario|ry|cyear|gas|cvalue|notation|inventorySubmissionYear",
+        "Total including LULUCF|WEM|0|2024|Total GHG emissions (ktCO2e)|1111|NA|2024",
+        "Total excluding LULUCF|WEM|0|2024|CO2 (ktCO2e)|2222|NA|2024",
+    ]
+    return "\n".join(rows).encode()
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not ENABLE_IMPORT_TEST, reason="import test disabled — set ENABLE_IMPORT_TEST=True")
 def test_import_file_bigdata(df_1619):
+    """Upload generated rows to Table1a (append, does not replace existing data)."""
+    csv_bytes = _generate_csv()
+    print(f"\n  uploading:\n{csv_bytes.decode()}")
+
     handle = df_1619.import_file(
         dataset_id=DATASET_ID,
-        file=SAMPLE_CSV,
+        file=csv_bytes,
         filename="test_upload.csv",
-        table_schema_id=SAMPLE_TABLE_SCHEMA_ID,
+        table_schema_id=TABLE_SCHEMA_ID,
+        # delimiter defaults to "|"
         replace=False,
     )
     handle.wait(
@@ -134,3 +143,12 @@ def test_import_file_bigdata(df_1619):
         timeout=600.0,
         on_status=lambda s: print(f"  import status: {s}"),
     )
+    print("  import finished — verifying via export")
+
+    frames = df_1619.etl_export(dataset_id=DATASET_ID).to_frames(
+        poll_interval=10.0,
+        timeout=600.0,
+        on_status=lambda s: print(f"  export status: {s}"),
+    )
+    assert "Table1a" in frames
+    print(f"  Table1a now has {frames['Table1a'].shape[0]} rows")
