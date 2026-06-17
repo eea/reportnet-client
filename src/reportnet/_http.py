@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import time
+from typing import Any
 
 import httpx
 
@@ -13,7 +14,7 @@ _BASE_DELAY = 1.0
 
 
 def _backoff(attempt: int) -> float:
-    return _BASE_DELAY * (2**attempt) + random.uniform(0, 0.1)
+    return float(_BASE_DELAY * (2**attempt) + random.uniform(0, 0.1))
 
 
 class HttpSession:
@@ -24,16 +25,16 @@ class HttpSession:
             timeout=timeout,
         )
 
-    def get(self, url: str, **kwargs: object) -> httpx.Response:
+    def get(self, url: str, **kwargs: Any) -> httpx.Response:
         return self._request("GET", url, **kwargs)
 
-    def post(self, url: str, **kwargs: object) -> httpx.Response:
+    def post(self, url: str, **kwargs: Any) -> httpx.Response:
         return self._request("POST", url, **kwargs)
 
-    def put(self, url: str, **kwargs: object) -> httpx.Response:
+    def put(self, url: str, **kwargs: Any) -> httpx.Response:
         return self._request("PUT", url, **kwargs)
 
-    def _request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+    def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         attempt = 0
         while True:
             last_attempt = attempt >= _MAX_RETRIES

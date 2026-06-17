@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import IO, Literal, Union
+from typing import IO, TYPE_CHECKING, Any, Literal, Union
 
 from ._http import HttpSession
 from ._util import to_file_tuple
 from .models import DatasetSchema, JobHandle
+
+if TYPE_CHECKING:
+    from .dataflow import DataflowClient
 
 
 class ReportnetClient:
@@ -184,7 +187,7 @@ class ReportnetClient:
         *,
         dataset_id: int,
     ) -> JobHandle:
-        """GET /dataset/exportDatasetFileDL — async whole-dataset export, BigData datalake variant."""
+        """GET /dataset/exportDatasetFileDL — async whole-dataset export, BigData variant."""
         response = self._http.get(
             "/dataset/exportDatasetFileDL",
             params={
@@ -253,7 +256,7 @@ class ReportnetClient:
         dataflow_id: int,
         provider_id: int,
     ) -> bytes:
-        """GET /downloadValidation/{snapshotId} — validation results for a release snapshot as CSV."""
+        """GET /downloadValidation/{snapshotId} — validation results for a release snapshot."""
         response = self._http.get(
             f"/downloadValidation/{snapshot_id}",
             params={
@@ -293,7 +296,7 @@ class ReportnetClient:
 
 
 def _make_job(
-    data: dict[str, object],
+    data: dict[str, Any],
     http: HttpSession,
     *,
     provider_id: int | None = None,
@@ -301,7 +304,7 @@ def _make_job(
 ) -> JobHandle:
     job_id = data.get("jobId") or _extract_job_id(str(data["pollingUrl"]))
     return JobHandle(
-        job_id=int(job_id),  # type: ignore[arg-type]
+        job_id=int(job_id),
         polling_url=str(data["pollingUrl"]),
         _http=http,
         _is_export=is_export,

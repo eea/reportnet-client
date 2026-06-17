@@ -19,20 +19,21 @@ def to_file_tuple(
         return filename or "upload.csv", file
 
     if hasattr(file, "read"):
-        content: bytes = file.read()  # type: ignore[union-attr]
+        content: bytes = file.read()
         name: str = getattr(file, "name", None) or "upload.csv"
         return filename or name, content
 
     # DataFrame via narwhals (supports polars, pandas, modin, …)
     try:
-        import narwhals as nw  # type: ignore[import]
+        import narwhals as nw
     except ImportError:
         raise ImportError(
-            "narwhals is required to pass a DataFrame; install it with: pip install reportnet[dataframe]"
+            "narwhals is required to pass a DataFrame; "
+            "install it with: pip install reportnet[dataframe]"
         ) from None
 
     try:
-        native = nw.to_native(nw.from_native(file, eager_only=True))
+        native = nw.to_native(nw.from_native(file, eager_only=True))  # type: ignore[call-overload]
     except TypeError:
         raise TypeError(f"Unsupported file type: {type(file).__name__}") from None
 
@@ -54,14 +55,14 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
     Tries polars first; falls back to pandas if polars is not installed.
     """
     try:
-        import polars as pl  # type: ignore[import]
+        import polars as pl
 
         def _read(data: bytes) -> Any:
             return pl.read_csv(io.BytesIO(data))
 
     except ImportError:
         try:
-            import pandas as pd  # type: ignore[import]
+            import pandas as pd  # type: ignore[import-untyped]
 
             def _read(data: bytes) -> Any:
                 return pd.read_csv(io.BytesIO(data))
