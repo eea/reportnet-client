@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 
 class DataProvider(NamedTuple):
@@ -115,3 +115,19 @@ def by_id(provider_id: int) -> DataProvider | None:
 def by_country(country_code: str) -> list[DataProvider]:
     """Return all DataProviders for a given ISO country code (e.g. 'AT', 'IE')."""
     return _BY_COUNTRY.get(country_code.upper(), [])
+
+
+GroupField = Literal["eea_group", "eurostat_group"]
+
+
+def by_group(
+    group: str,
+    *,
+    field: GroupField = "eea_group",
+) -> list[DataProvider]:
+    """Return all DataProviders belonging to a named group.
+
+    group: e.g. 'EEA', 'EU', 'EFTA', 'ENP East', 'EEA Cooperating country', 'Other'.
+    field: 'eea_group' (default) or 'eurostat_group'.
+    """
+    return [p for p in PROVIDERS if getattr(p, field) == group]

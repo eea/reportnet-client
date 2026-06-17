@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
+
 _SERVICE = "reportnet"
 
 
-def _keyring():
+def _keyring() -> Any:
     try:
-        import keyring  # type: ignore[import]
+        import keyring
         return keyring
     except ImportError:
         raise ImportError(
@@ -26,7 +28,7 @@ def get_key(dataflow_id: int | str) -> str:
             f"No API key found for dataflow {dataflow_id}. "
             f"Store one with: reportnet.save_key({dataflow_id!r}, 'your-key')"
         )
-    return key
+    return str(key)
 
 
 def delete_key(dataflow_id: int | str) -> None:

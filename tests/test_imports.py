@@ -3,7 +3,7 @@ import io
 import httpx
 import pytest
 
-from reportnet import JobHandle, ReportnetClient
+from reportnet import JobHandle
 
 POLLING_URL = "/orchestrator/jobs/pollForJobStatus/100?datasetId=1&dataflowId=2"
 JOB_RESPONSE = {"jobId": 100, "pollingUrl": POLLING_URL}
