@@ -73,7 +73,7 @@ handle.wait()
 
 ## Export data
 
-All export methods are asynchronous and return a `JobHandle`. Call `.result()` to wait for completion and receive the file bytes.
+All export methods are asynchronous and return a `JobHandle`. Call `.result()` to wait for completion and receive the file bytes, or `.to_frames()` to get a dict of DataFrames directly.
 
 ```python
 # Full dataset export — returns a ZIP of CSVs
@@ -82,6 +82,9 @@ zip_bytes = handle.result()
 
 with open("export.zip", "wb") as f:
     f.write(zip_bytes)
+
+# Export directly into DataFrames (requires reportnet[dataframe])
+frames = handle.to_frames()  # {"Table1a": <DataFrame>, "Table1b": <DataFrame>, ...}
 
 # Single-table export (CSV or XLSX)
 handle = client.export_file(dataset_id=35432, table_schema_id="abc123", mime_type="xlsx")
@@ -95,6 +98,29 @@ zip_bytes = handle.result()
 handle = client.export_file_dl(dataset_id=35432, table_schema_id="abc123")
 handle = client.export_dataset_file_dl(dataset_id=35432)
 ```
+
+## Dataset schema
+
+Retrieve table names, field names, types, and required flags for any dataset:
+
+```python
+schema = client.get_schema(dataset_id=35432)
+
+for table in schema.tables:
+    print(table.name, "— required:", table.required_columns())
+    # Table1a — required: ['category', 'scenario', 'ry', 'cyear', 'gas']
+
+# Look up a specific table
+table = schema.table("Table1a")
+table.column_names()     # all fields in schema order
+table.required_columns() # only required fields
+
+# Inspect individual fields
+for field in table.fields:
+    print(field.name, field.type, "required" if field.required else "")
+```
+
+`field.type` is a `FieldType` enum (`TEXT`, `NUMBER_INTEGER`, `NUMBER_DECIMAL`, `DATE`, `LINK`, `CODELIST`, …).
 
 ## Validate a dataset
 
@@ -160,7 +186,7 @@ by_group("EU", field="eurostat_group")  # EU providers by Eurostat classificatio
 ## Error handling
 
 ```python
-from reportnet import AuthError, APIError, JobFailedError, RateLimitError
+from reportnet import AuthError, APIError, DatasetLockedError, JobFailedError, RateLimitError
 
 try:
     handle = client.import_file(...)
@@ -169,6 +195,8 @@ except AuthError:
     print("Invalid or expired API key")
 except RateLimitError:
     print("Rate limit hit — back off and retry")
+except DatasetLockedError:
+    print("Another job is already running on this dataset — try again shortly")
 except JobFailedError as e:
     print(f"Job {e.job_id} ended with {e.status}")
 except APIError as e:
@@ -183,8 +211,9 @@ creating duplicate jobs.
 
 ```bash
 # Requires uv — https://docs.astral.sh/uv/
-uv sync          # create .venv and install all dev dependencies
-uv run pytest    # run tests
+uv sync                       # create .venv and install all dev dependencies
+uv run pytest                 # run unit tests (integration tests skipped)
+uv run pytest --integration   # also run live API tests (requires keyring credentials)
 uv run ruff check src tests
 uv run mypy src
 ```
