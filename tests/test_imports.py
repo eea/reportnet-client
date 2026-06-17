@@ -27,7 +27,18 @@ def test_import_file_io(mock_router, client):
     assert handle.job_id == 100
 
 
-def test_import_file_dataframe(mock_router, client):
+def test_import_file_polars_dataframe(mock_router, client):
+    pl = pytest.importorskip("polars")
+    mock_router.post("/dataset/v2/importFileData/1").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    df = pl.DataFrame({"col1": ["val1"], "col2": ["val2"]})
+    handle = client.import_file(dataset_id=1, dataflow_id=2, file=df)
+    assert handle.job_id == 100
+
+
+def test_import_file_pandas_dataframe(mock_router, client):
+    pytest.importorskip("narwhals")
     pd = pytest.importorskip("pandas")
     mock_router.post("/dataset/v2/importFileData/1").mock(
         return_value=httpx.Response(200, json=JOB_RESPONSE)

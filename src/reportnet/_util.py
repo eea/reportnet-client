@@ -22,17 +22,25 @@ def to_file_tuple(
         name: str = getattr(file, "name", None) or "upload.csv"
         return filename or name, content
 
-    # pandas DataFrame — optional dependency
+    # DataFrame via narwhals (supports polars, pandas, modin, …)
     try:
-        import pandas as pd  # type: ignore[import]
+        import narwhals as nw  # type: ignore[import]
     except ImportError:
         raise ImportError(
-            "pandas is required to pass a DataFrame; install it with: pip install reportnet[pandas]"
+            "narwhals is required to pass a DataFrame; install it with: pip install reportnet[dataframe]"
         ) from None
 
-    if isinstance(file, pd.DataFrame):
-        buf = io.BytesIO()
-        file.to_csv(buf, index=False)
-        return filename or "upload.csv", buf.getvalue()
+    try:
+        native = nw.to_native(nw.from_native(file, eager_only=True))
+    except TypeError:
+        raise TypeError(f"Unsupported file type: {type(file).__name__}") from None
 
-    raise TypeError(f"Unsupported file type: {type(file).__name__}")
+    # Polars: write_csv() returns a str
+    if hasattr(native, "write_csv"):
+        result = native.write_csv()
+        return filename or "upload.csv", result.encode() if isinstance(result, str) else result
+
+    # Pandas-like: to_csv() writes to a buffer
+    buf = io.BytesIO()
+    native.to_csv(buf, index=False)
+    return filename or "upload.csv", buf.getvalue()

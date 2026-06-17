@@ -7,8 +7,8 @@ Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.e
 ```bash
 pip install -e .
 
-# Optional: pandas DataFrame support
-pip install -e ".[pandas]"
+# Optional: DataFrame support (polars + narwhals)
+pip install -e ".[dataframe]"
 ```
 
 ## Setup
@@ -33,10 +33,10 @@ handle = client.import_file(
 )
 handle.wait()  # blocks until done
 
-# From a pandas DataFrame
-import pandas as pd
+# From a polars DataFrame (pandas also works via narwhals)
+import polars as pl
 
-df = pd.DataFrame({"country": ["IE", "DE"], "value": [1.2, 3.4]})
+df = pl.DataFrame({"country": ["IE", "DE"], "value": [1.2, 3.4]})
 handle = client.import_file(dataset_id=35432, dataflow_id=11720, file=df)
 handle.wait()
 ```
