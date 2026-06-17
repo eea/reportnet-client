@@ -1,10 +1,10 @@
 """Tests for retry / back-off logic in HttpSession._request."""
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
 
-from reportnet import JobHandle, ReportnetClient
+from reportnet import JobHandle
 from reportnet.exceptions import APIError, RateLimitError
 
 POLLING_URL = "/orchestrator/jobs/pollForJobStatus/1?datasetId=1&dataflowId=2"

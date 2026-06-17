@@ -8,7 +8,6 @@ from typing import Any, Callable
 from ._http import HttpSession
 from .exceptions import JobFailedError, JobTimeoutError
 
-
 # ── Schema models ─────────────────────────────────────────────────────────────
 
 class FieldType(str, Enum):

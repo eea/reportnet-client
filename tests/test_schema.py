@@ -1,8 +1,7 @@
 import httpx
 import pytest
 
-from reportnet import DatasetSchema, FieldType, ReportnetClient
-from reportnet.models import FieldSchema, TableSchema
+from reportnet import DatasetSchema, FieldType
 
 SCHEMA_RESPONSE = {
     "idDataSetSchema": "schema-001",

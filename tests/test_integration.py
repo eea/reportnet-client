@@ -64,7 +64,9 @@ def test_etl_export_to_frames(df_1619):
 
 
 @pytest.mark.integration
-@pytest.mark.xfail(reason="/dataset/exportDatasetFileDL returned 404 on live API — endpoint may not be deployed")
+@pytest.mark.xfail(
+    reason="/dataset/exportDatasetFileDL returned 404 on live API — endpoint may not be deployed"
+)
 def test_export_dataset_file_dl(df_1619):
     """BigData whole-dataset datalake export."""
     handle = df_1619.export_dataset_file_dl(dataset_id=DATASET_ID)

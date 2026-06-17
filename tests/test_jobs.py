@@ -11,7 +11,9 @@ POLLING_URL = "/orchestrator/jobs/pollForJobStatus/1?datasetId=1&dataflowId=2"
 
 
 def _handle(client, *, provider_id: int | None = None):
-    return JobHandle(job_id=1, polling_url=POLLING_URL, _http=client._http, _provider_id=provider_id)
+    return JobHandle(
+        job_id=1, polling_url=POLLING_URL, _http=client._http, _provider_id=provider_id
+    )
 
 
 def test_status_finished(mock_router, client):

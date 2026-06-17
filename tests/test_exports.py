@@ -35,7 +35,9 @@ def test_etl_export_returns_handle(mock_router, client):
 
 def test_etl_export_job_id_from_response(mock_router, client):
     mock_router.get("/dataset/v4/etlExport/1").mock(
-        return_value=httpx.Response(200, json={"jobId": 999, "pollingUrl": POLLING_URL, "status": "QUEUED"})
+        return_value=httpx.Response(
+            200, json={"jobId": 999, "pollingUrl": POLLING_URL, "status": "QUEUED"}
+        )
     )
     handle = client.etl_export(dataset_id=1, dataflow_id=2)
     assert handle.job_id == 999
