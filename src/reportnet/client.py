@@ -17,6 +17,17 @@ class ReportnetClient:
     ) -> None:
         self._http = HttpSession(api_key=api_key, base_url=base_url, timeout=timeout)
 
+    @classmethod
+    def from_keyring(
+        cls,
+        dataflow_id: int | str,
+        base_url: str = "https://api.reportnet.europa.eu",
+        timeout: float = 30.0,
+    ) -> "ReportnetClient":
+        """Create a client using the API key stored in the system keychain."""
+        from .keychain import get_key
+        return cls(api_key=get_key(dataflow_id), base_url=base_url, timeout=timeout)
+
     def close(self) -> None:
         self._http.close()
 
