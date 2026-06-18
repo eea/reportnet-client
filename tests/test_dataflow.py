@@ -1,7 +1,7 @@
 """Tests for dataflow-level metadata and new dataset management methods."""
 import httpx
 
-from reportnet import DataflowInfo, Reporter
+from reportnet import DataflowInfo, ReferenceDataset, Reporter, ReportingDataset, TestDataset
 from reportnet.dataflow import DataflowClient
 
 DATAFLOW_RESPONSE = {
@@ -10,11 +10,69 @@ DATAFLOW_RESPONSE = {
     "description": "Greenhouse gas inventory reporting",
     "type": "REPORTING",
     "status": "PUBLIC",
+    "reportingDatasets": [
+        {
+            "id": 93954,
+            "dataSetName": "France",
+            "dataProviderId": 56,
+            "datasetSchema": "schema-abc",
+            "nameDatasetSchema": "Table1a",
+            "status": "PENDING",
+        },
+        {
+            "id": 93958,
+            "dataSetName": "France",
+            "dataProviderId": 56,
+            "datasetSchema": "schema-def",
+            "nameDatasetSchema": "Table7",
+            "status": "PENDING",
+        },
+        {
+            "id": 93977,
+            "dataSetName": "Italy",
+            "dataProviderId": 64,
+            "datasetSchema": "schema-abc",
+            "nameDatasetSchema": "Table1a",
+            "status": "PENDING",
+        },
+    ],
+    "referenceDatasets": [
+        {
+            "id": 93975,
+            "dataSetName": "Reference Dataset - Codelist",
+            "creationDate": 1759385530194,
+            "status": None,
+            "datasetSchema": "schema-ref",
+            "idDataflow": None,
+            "publicFileName": "Reference Dataset - Codelist.zip",
+            "updatable": False,
+        },
+    ],
+    "testDatasets": [
+        {
+            "id": 93953,
+            "dataSetName": "Test Dataset - Table1a",
+            "creationDate": 1759385530194,
+            "status": None,
+            "datasetSchema": "schema-abc",
+            "idDataflow": None,
+        },
+        {
+            "id": 93957,
+            "dataSetName": "Test Dataset - Table7",
+            "creationDate": 1759385530194,
+            "status": None,
+            "datasetSchema": "schema-def",
+            "idDataflow": None,
+        },
+    ],
 }
 
 REPORTERS_RESPONSE = [
-    {"id": 10, "dataflowId": 1619, "dataProviderId": 42, "datasetId": 93953},
-    {"id": 11, "dataflowId": 1619, "dataProviderId": 43, "datasetId": None},
+    # The API does not echo dataflowId in the representatives list response;
+    # client.get_reporters() injects it from the URL parameter.
+    {"id": 10, "dataProviderId": 42},
+    {"id": 11, "dataProviderId": 43},
 ]
 
 
@@ -51,8 +109,16 @@ def test_get_reporters_returns_list(mock_router, client):
     assert len(reporters) == 2
     assert isinstance(reporters[0], Reporter)
     assert reporters[0].provider_id == 42
-    assert reporters[0].dataset_id == 93953
-    assert reporters[1].dataset_id is None
+
+
+def test_get_reporters_injects_dataflow_id(mock_router, client):
+    mock_router.get("/representative/v1/dataflow/1619").mock(
+        return_value=httpx.Response(200, json=REPORTERS_RESPONSE)
+    )
+    reporters = client.get_reporters(dataflow_id=1619)
+    # dataflowId is not in the API response — must be injected from the URL param
+    assert reporters[0].dataflow_id == 1619
+    assert reporters[1].dataflow_id == 1619
 
 
 def test_dataflow_client_get_reporters(mock_router, client):
@@ -61,6 +127,118 @@ def test_dataflow_client_get_reporters(mock_router, client):
     )
     reporters = client.for_dataflow(1619).get_reporters()
     assert reporters[0].dataflow_id == 1619
+
+
+def test_reporter_country_code(mock_router, client):
+    mock_router.get("/representative/v1/dataflow/1619").mock(
+        return_value=httpx.Response(200, json=REPORTERS_RESPONSE)
+    )
+    reporters = client.get_reporters(dataflow_id=1619)
+    # provider_id=42 is Austria (AT) in the providers mapping
+    r = reporters[0]
+    assert r.country_code is not None   # in mapping
+    assert len(r.country_code) == 2     # two-letter ISO code
+    assert r.country_name is not None
+
+    # provider_id=43 — just verify property doesn't raise for any id
+    r2 = reporters[1]
+    _ = r2.country_code   # None is fine if not in mapping
+
+
+# ── get_reporting_datasets ────────────────────────────────────────────────────
+
+def test_get_reporting_datasets(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    datasets = client.get_reporting_datasets(dataflow_id=1619)
+    assert len(datasets) == 3
+    assert isinstance(datasets[0], ReportingDataset)
+    assert datasets[0].id == 93954
+    assert datasets[0].provider_id == 56
+    assert datasets[0].table_name == "Table1a"
+    assert datasets[0].status == "PENDING"
+
+
+def test_get_reporting_datasets_filtered_by_provider(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    all_ds = client.for_dataflow(1619).get_reporting_datasets()
+    france = [ds for ds in all_ds if ds.provider_id == 56]
+    assert len(france) == 2
+    assert {ds.table_name for ds in france} == {"Table1a", "Table7"}
+
+
+def test_reporting_dataset_no_datasets_key(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json={"id": 1619, "name": "x", "status": "DRAFT",
+                                               "description": "", "type": "REPORTING"})
+    )
+    datasets = client.get_reporting_datasets(dataflow_id=1619)
+    assert datasets == []
+
+
+# ── get_reference_datasets ────────────────────────────────────────────────────
+
+def test_get_reference_datasets(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    refs = client.get_reference_datasets(dataflow_id=1619)
+    assert len(refs) == 1
+    assert isinstance(refs[0], ReferenceDataset)
+    assert refs[0].id == 93975
+    assert refs[0].name == "Reference Dataset - Codelist"
+    assert refs[0].schema_id == "schema-ref"
+    assert refs[0].updatable is False
+    assert refs[0].public_filename == "Reference Dataset - Codelist.zip"
+
+
+def test_get_reference_datasets_empty(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json={"id": 1619, "name": "x", "status": "DRAFT",
+                                               "description": "", "type": "REPORTING"})
+    )
+    assert client.get_reference_datasets(dataflow_id=1619) == []
+
+
+def test_dataflow_client_get_reference_datasets(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    refs = client.for_dataflow(1619).get_reference_datasets()
+    assert refs[0].id == 93975
+
+
+# ── get_test_datasets ─────────────────────────────────────────────────────────
+
+def test_get_test_datasets(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    tests = client.get_test_datasets(dataflow_id=1619)
+    assert len(tests) == 2
+    assert isinstance(tests[0], TestDataset)
+    assert tests[0].id == 93953
+    assert tests[0].name == "Test Dataset - Table1a"
+    assert tests[0].schema_id == "schema-abc"
+
+
+def test_get_test_datasets_empty(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json={"id": 1619, "name": "x", "status": "DRAFT",
+                                               "description": "", "type": "REPORTING"})
+    )
+    assert client.get_test_datasets(dataflow_id=1619) == []
+
+
+def test_dataflow_client_get_test_datasets(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    tests = client.for_dataflow(1619).get_test_datasets()
+    assert {t.schema_id for t in tests} == {"schema-abc", "schema-def"}
 
 
 # ── is_big_dataflow ───────────────────────────────────────────────────────────
@@ -77,6 +255,29 @@ def test_is_big_dataflow_false(mock_router, client):
         return_value=httpx.Response(200, json=False)
     )
     assert client.for_dataflow(1619).is_big_dataflow() is False
+
+
+# ── ping ──────────────────────────────────────────────────────────────────────
+
+def test_ping_returns_true_on_success(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    assert client.ping(dataflow_id=1619) is True
+
+
+def test_ping_returns_false_on_auth_error(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(401)
+    )
+    assert client.ping(dataflow_id=1619) is False
+
+
+def test_dataflow_client_ping(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    assert client.for_dataflow(1619).ping() is True
 
 
 # ── for_provider ──────────────────────────────────────────────────────────────

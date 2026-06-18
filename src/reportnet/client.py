@@ -5,7 +5,15 @@ from typing import IO, TYPE_CHECKING, Any, Literal, Union
 
 from ._http import HttpSession
 from ._util import to_file_tuple
-from .models import DataflowInfo, DatasetSchema, JobHandle, Reporter
+from .models import (
+    DataflowInfo,
+    DatasetSchema,
+    JobHandle,
+    ReferenceDataset,
+    Reporter,
+    ReportingDataset,
+    TestDataset,
+)
 
 if TYPE_CHECKING:
     from .dataflow import DataflowClient
@@ -41,6 +49,25 @@ class ReportnetClient:
         from .dataflow import DataflowClient
         return DataflowClient(self, dataflow_id=dataflow_id, provider_id=provider_id)
 
+    def ping(self, *, dataflow_id: int) -> bool:
+        """Return True if the API key is valid and the API is reachable.
+
+        Makes a single lightweight GET request.  Returns False on auth failure;
+        raises on network errors (so transient connectivity issues surface
+        as exceptions rather than a silent False).
+
+        Example::
+
+            if not client.ping(dataflow_id=1619):
+                raise RuntimeError("API key is invalid or has been revoked")
+        """
+        from .exceptions import AuthError
+        try:
+            self._http.get(f"/dataflow/v1/{dataflow_id}")
+            return True
+        except AuthError:
+            return False
+
     # ── Dataflow metadata ─────────────────────────────────────────────────────
 
     def get_dataflow(self, *, dataflow_id: int) -> DataflowInfo:
@@ -51,7 +78,37 @@ class ReportnetClient:
     def get_reporters(self, *, dataflow_id: int) -> list[Reporter]:
         """GET /representative/v1/dataflow/{dataflowId} — countries/orgs reporting to a dataflow."""
         response = self._http.get(f"/representative/v1/dataflow/{dataflow_id}")
-        return [Reporter.from_dict(r) for r in response.json()]
+        return [Reporter.from_dict(r, dataflow_id=dataflow_id) for r in response.json()]
+
+    def get_reporting_datasets(self, *, dataflow_id: int) -> list[ReportingDataset]:
+        """GET /dataflow/v1/{dataflowId} — all reporting datasets (one per provider × table).
+
+        Each country (reporter) has one dataset per table schema defined in the dataflow.
+        Filter by ``provider_id`` to get all datasets for a specific country.
+        """
+        response = self._http.get(f"/dataflow/v1/{dataflow_id}")
+        raw = response.json().get("reportingDatasets") or []
+        return [ReportingDataset.from_dict(d) for d in raw]
+
+    def get_reference_datasets(self, *, dataflow_id: int) -> list[ReferenceDataset]:
+        """GET /dataflow/v1/{dataflowId} — all reference datasets for a dataflow.
+
+        Reference datasets hold shared lookup data such as codelists.
+        They are not tied to any specific reporter.
+        """
+        response = self._http.get(f"/dataflow/v1/{dataflow_id}")
+        raw = response.json().get("referenceDatasets") or []
+        return [ReferenceDataset.from_dict(d) for d in raw]
+
+    def get_test_datasets(self, *, dataflow_id: int) -> list[TestDataset]:
+        """GET /dataflow/v1/{dataflowId} — all test datasets for a dataflow.
+
+        Test datasets mirror the reporting schema and are used by custodians
+        to verify validation rules before the reporting period opens.
+        """
+        response = self._http.get(f"/dataflow/v1/{dataflow_id}")
+        raw = response.json().get("testDatasets") or []
+        return [TestDataset.from_dict(d) for d in raw]
 
     def is_big_dataflow(self, *, dataflow_id: int) -> bool:
         """GET /dataflow/private/v1/{dataflowId}/isBigDataflow — BigData (DLT2) flag."""

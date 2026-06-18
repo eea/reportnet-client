@@ -52,12 +52,12 @@ The library mirrors this structure:
 client = ReportnetClient(api_key="...")
 
 # Dataflow-scoped client — pre-fills dataflow_id
-df = client.for_dataflow(1619)
-df.get_dataflow()    # DataflowInfo: name, type, status
-df.get_reporters()   # list of Reporter objects with provider_id and dataset_id
+flow = client.for_dataflow(1619)
+flow.get_dataflow()    # DataflowInfo: name, type, status
+flow.get_reporters()   # list of Reporter objects with provider_id and dataset_id
 
 # Reporter-scoped client — pre-fills dataflow_id + provider_id
-ie = df.for_provider(42)
+ie = flow.for_provider(42)
 ie.import_file(dataset_id=93953, file="data.csv")
 ```
 
@@ -88,5 +88,5 @@ Reportnet has two storage backends:
 | **Citus** | Standard PostgreSQL-based storage | `etl_export`, `etl_import`, `list_group_validations` |
 | **BigData (DLT2)** | Large-scale columnar storage | `export_file_dl`, `export_dataset_file_dl`, `list_group_validations_dl` |
 
-Use `df.is_big_dataflow()` to check which backend a dataflow uses and pick
+Use `flow.is_big_dataflow()` to check which backend a dataflow uses and pick
 the right methods.

@@ -1,44 +1,52 @@
 import marimo
 
-__generated_with = "0.9.0"
-app = marimo.App(width="medium", app_title="Reportnet — Import / Export Pipeline")
+__generated_with = "0.23.6"
+app = marimo.App(
+    width="medium",
+    app_title="Reportnet — Import / Export Pipeline",
+)
 
 
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        r"""
-        # Import / Export Pipeline
+    mo.md(r"""
+    # Import / Export Pipeline
 
-        A complete data cycle:
+    A complete data cycle:
 
-        1. **Export** existing data to DataFrames
-        2. **Inspect** what's there
-        3. **Build** new rows using the schema as a template
-        4. **Import** the new data
-        5. **Validate** and read back results
-        """
-    )
+    1. **Export** existing data to DataFrames
+    2. **Inspect** what's there
+    3. **Build** new rows using the schema as a template
+    4. **Import** the new data
+    5. **Validate** and read back results
+    """)
     return
 
-
-# ── Setup ─────────────────────────────────────────────────────────────────────
 
 @app.cell
 def _():
     import reportnet
 
-    DATAFLOW_ID  = 1619
-    DATASET_ID   = 93953
-    PROVIDER_ID  = None   # None = custodian; set to reporter's provider_id if needed
+    DATAFLOW_ID     = 1619
+    DATASET_ID      = 93953
+    PROVIDER_ID     = None      # None = custodian; set to reporter's provider_id if needed
+    REF_DATASET_ID  = None      # None = auto-detect; set explicitly to override
     TABLE_SCHEMA_ID = "68dd41f045f9450001260da7"   # from Reportnet URL tab fragment
-    return DATAFLOW_ID, DATASET_ID, PROVIDER_ID, TABLE_SCHEMA_ID, reportnet
+    return (
+        DATAFLOW_ID,
+        DATASET_ID,
+        PROVIDER_ID,
+        REF_DATASET_ID,
+        TABLE_SCHEMA_ID,
+        reportnet,
+    )
 
 
 @app.cell
@@ -46,29 +54,25 @@ def _(DATAFLOW_ID, PROVIDER_ID, mo, reportnet):
     try:
         _client = reportnet.ReportnetClient.from_keyring(DATAFLOW_ID)
         if PROVIDER_ID is not None:
-            df_client = _client.for_dataflow(DATAFLOW_ID).for_provider(PROVIDER_ID)
+            flow = _client.for_dataflow(DATAFLOW_ID).for_provider(PROVIDER_ID)
         else:
-            df_client = _client.for_dataflow(DATAFLOW_ID)
+            flow = _client.for_dataflow(DATAFLOW_ID)
         connect_ok = True
         mo.callout(mo.md("Connected"), kind="success")
     except KeyError:
-        df_client = None
+        flow = None
         connect_ok = False
         mo.callout(mo.md(f"No API key for dataflow {DATAFLOW_ID}"), kind="danger")
-    return connect_ok, df_client
+    return connect_ok, flow
 
-
-# ── 1. Export ─────────────────────────────────────────────────────────────────
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## 1. Export existing data
+    mo.md("""
+    ## 1. Export existing data
 
-        `etl_export().to_frames()` returns all tables as DataFrames in one call.
-        """
-    )
+    `etl_export().to_frames()` returns all tables as DataFrames in one call.
+    """)
     return
 
 
@@ -80,11 +84,11 @@ def _(mo):
 
 
 @app.cell
-def _(DATASET_ID, connect_ok, df_client, export_btn, mo):
+def _(DATASET_ID, connect_ok, export_btn, flow, mo):
     mo.stop(not connect_ok or not export_btn.value)
 
     with mo.status.spinner("Exporting…"):
-        frames = df_client.etl_export(
+        frames = flow.etl_export(
             dataset_id=DATASET_ID,
         ).to_frames(poll_interval=5.0, timeout=600.0)
 
@@ -96,11 +100,11 @@ def _(DATASET_ID, connect_ok, df_client, export_btn, mo):
     return (frames,)
 
 
-# ── 2. Inspect ────────────────────────────────────────────────────────────────
-
 @app.cell
 def _(mo):
-    mo.md("## 2. Inspect the data")
+    mo.md("""
+    ## 2. Inspect the data
+    """)
     return
 
 
@@ -119,31 +123,43 @@ def _(frames, mo, table_pick):
         mo.md(f"**{table_pick.value}** — {current_frame.shape[0]} rows × {current_frame.shape[1]} cols"),
         mo.ui.table(current_frame.head(50)),
     ])
-    return (current_frame,)
-
-
-# ── 3. Build new rows from schema ─────────────────────────────────────────────
-
-@app.cell
-def _(mo):
-    mo.md(
-        """
-        ## 3. Build new rows
-
-        `get_schema()` + `to_frame()` gives an empty DataFrame with the correct
-        column types. Populate it, then concatenate with existing data or import
-        directly.
-        """
-    )
     return
 
 
 @app.cell
-def _(DATASET_ID, connect_ok, df_client, mo):
+def _(mo):
+    mo.md("""
+    ## 3. Build new rows
+
+    `get_schema()` + `to_frame()` gives an empty DataFrame with the correct
+    column types. Populate it, then concatenate with existing data or import
+    directly.
+    """)
+    return
+
+
+@app.cell
+def _(DATASET_ID, REF_DATASET_ID, connect_ok, flow, mo):
     import polars as pl
 
     mo.stop(not connect_ok)
-    schema = df_client.get_schema(dataset_id=DATASET_ID)
+    schema = flow.get_schema(dataset_id=DATASET_ID)
+
+    # Auto-detect reference dataset when REF_DATASET_ID is not set explicitly
+    _ref_id = REF_DATASET_ID
+    if _ref_id is None:
+        _refs = flow.get_reference_datasets()
+        if _refs:
+            _ref_id = _refs[0].id
+
+    if _ref_id is not None:
+        with mo.status.spinner(f"Resolving codelists from reference dataset {_ref_id}…"):
+            codelists = flow.get_codelists(
+                dataset_id=DATASET_ID,
+                ref_dataset_id=_ref_id,
+            )
+    else:
+        codelists = None
 
     # Show the schema as a table
     field_info = pl.DataFrame({
@@ -153,51 +169,65 @@ def _(DATASET_ID, connect_ok, df_client, mo):
         "required": [f.required   for t in schema.tables for f in t.fields],
     })
     mo.vstack([
-        mo.md(f"Schema: **{schema.name}**"),
+        mo.md(f"Schema: **{schema.name}**"
+              + (f"  — codelists resolved for: `{list(codelists)}`" if codelists else "")),
         mo.ui.table(field_info),
     ])
-    return field_info, pl, schema
+    return codelists, pl, schema
 
 
 @app.cell
-def _(mo, pl, schema):
-    # Get an empty template DataFrame for Table1a
+def _(codelists, mo, pl, schema):
+    # Get an empty template DataFrame for Table1a (LINK columns use Enum when codelists known)
     try:
-        template = schema.table("Table1a").to_frame()
+        template = schema.table("Table1a").to_frame(codelists=codelists)
     except KeyError:
-        template = schema.tables[0].to_frame()
+        template = schema.tables[0].to_frame(codelists=codelists)
 
+    # Show valid values for Enum columns (resolved from the reference dataset)
+    _enum_rows = [
+        {"column": col, "valid_values": ", ".join(str(c) for c in dtype.categories)}
+        for col, dtype in template.schema.items()
+        if isinstance(dtype, pl.Enum)
+    ]
     mo.vstack([
-        mo.md(f"Empty template — dtypes: `{dict(zip(template.columns, [str(d) for d in template.dtypes]))}`"),
-        mo.ui.table(template),
+        mo.md(f"**{template.columns}** — {len(template.columns)} columns"),
+        mo.ui.table(pl.DataFrame(_enum_rows)) if _enum_rows else mo.md("*(no Enum columns)*"),
     ])
+    return (template,)
 
-    # Build new rows — edit these values to match your data
-    new_rows = pl.DataFrame({
+
+@app.cell
+def _(mo, pl, template):
+    # Build new rows — values for Enum columns must match the categories shown above.
+    # The .cast() at the end validates every value and raises immediately on invalid input.
+    _data = {
         "category":                ["Total including LULUCF",  "Total excluding LULUCF"],
         "scenario":                ["WEM",                     "WEM"],
         "ry":                      ["0",                       "0"],
         "cyear":                   [2024,                      2024],
-        "gas":                     ["Total GHG emissions (ktCO2e)", "CO2 (ktCO2e)"],
+        "gas":                     ["Total GHG emissions (ktCO2e)", "CO2 (kt)"],
         "cvalue":                  [1111.0,                    2222.0],
         "notation":                ["NA",                      "NA"],
         "inventorySubmissionYear": [2024,                      2024],
-    }).cast({col: template.schema[col] for col in template.columns if col in template.schema})
-
+    }
+    new_rows: pl.DataFrame = pl.DataFrame(_data).cast(
+        {col: template.schema[col] for col in _data if col in template.schema}
+    )
     mo.md(f"New rows to import: **{new_rows.shape[0]}**")
-    return new_rows, template
+    return (new_rows,)
 
-
-# ── 4. Import ─────────────────────────────────────────────────────────────────
 
 @app.cell
 def _(mo):
-    mo.md("## 4. Import new rows")
+    mo.md("""
+    ## 4. Import new rows
+    """)
     return
 
 
 @app.cell
-def _(mo, new_rows):
+def _(mo, new_rows: "pl.DataFrame"):
     mo.vstack([
         mo.md("Preview of rows to upload:"),
         mo.ui.table(new_rows),
@@ -220,15 +250,15 @@ def _(
     DATASET_ID,
     TABLE_SCHEMA_ID,
     connect_ok,
-    df_client,
+    flow,
     import_btn,
     mo,
-    new_rows,
+    new_rows: "pl.DataFrame",
 ):
     mo.stop(not connect_ok or not import_btn.value)
 
     with mo.status.spinner("Importing…"):
-        import_handle = df_client.import_file(
+        import_handle = flow.import_file(
             dataset_id=DATASET_ID,
             file=new_rows,
             table_schema_id=TABLE_SCHEMA_ID,
@@ -237,14 +267,14 @@ def _(
         import_handle.wait(poll_interval=5.0, timeout=300.0)
 
     mo.callout(mo.md("Import finished"), kind="success")
-    return (import_handle,)
+    return
 
-
-# ── 5. Validate ───────────────────────────────────────────────────────────────
 
 @app.cell
 def _(mo):
-    mo.md("## 5. Validate")
+    mo.md("""
+    ## 5. Validate
+    """)
     return
 
 
@@ -256,32 +286,32 @@ def _(mo):
 
 
 @app.cell
-def _(DATASET_ID, connect_ok, df_client, mo, reportnet, validate_btn):
+def _(DATASET_ID, connect_ok, flow, mo, reportnet, validate_btn):
     mo.stop(not connect_ok or not validate_btn.value)
 
     try:
         with mo.status.spinner("Validating…"):
-            val_handle = df_client.add_validation_job(dataset_id=DATASET_ID)
+            val_handle = flow.add_validation_job(dataset_id=DATASET_ID)
             val_handle.wait(poll_interval=10.0, timeout=600.0)
         mo.callout(mo.md("Validation finished"), kind="success")
     except reportnet.DatasetLockedError:
         mo.callout(mo.md("Dataset locked — another job is running. Try again shortly."), kind="warn")
-    return (val_handle,)
+    return
 
 
 @app.cell
-def _(DATASET_ID, connect_ok, df_client, mo):
+def _(DATASET_ID, connect_ok, flow, mo):
     mo.stop(not connect_ok)
-    validation_results = df_client.list_group_validations_dl(dataset_id=DATASET_ID)
+    validation_results = flow.list_group_validations_dl(dataset_id=DATASET_ID)
     mo.md(f"Validation result keys: `{list(validation_results)[:8]}`")
-    return (validation_results,)
+    return
 
-
-# ── 6. Verify via re-export ───────────────────────────────────────────────────
 
 @app.cell
 def _(mo):
-    mo.md("## 6. Verify via re-export")
+    mo.md("""
+    ## 6. Verify via re-export
+    """)
     return
 
 
@@ -293,11 +323,11 @@ def _(mo):
 
 
 @app.cell
-def _(DATASET_ID, connect_ok, df_client, mo, verify_btn):
+def _(DATASET_ID, connect_ok, flow, mo, verify_btn):
     mo.stop(not connect_ok or not verify_btn.value)
 
     with mo.status.spinner("Exporting…"):
-        updated_frames = df_client.etl_export(dataset_id=DATASET_ID).to_frames(
+        updated_frames = flow.etl_export(dataset_id=DATASET_ID).to_frames(
             poll_interval=5.0, timeout=600.0
         )
 
@@ -307,7 +337,7 @@ def _(DATASET_ID, connect_ok, df_client, mo, verify_btn):
             f"- **{name}**: {f.shape[0]} rows" for name, f in updated_frames.items()
         )),
     ])
-    return (updated_frames,)
+    return
 
 
 if __name__ == "__main__":

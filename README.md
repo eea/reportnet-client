@@ -63,14 +63,14 @@ Use `for_provider()` within it to further scope to a specific reporter.
 
 ```python
 # Custodian / admin — no reporter scope
-df = client.for_dataflow(1619)
+flow = client.for_dataflow(1619)
 
-info = df.get_dataflow()       # DataflowInfo(id=1619, name=..., type="REPORTING", status="PUBLIC")
-reporters = df.get_reporters() # [Reporter(provider_id=42, dataset_id=93953, ...), ...]
-df.is_big_dataflow()           # True / False (BigData vs Citus backend)
+info = flow.get_dataflow()       # DataflowInfo(id=1619, name=..., type="REPORTING", status="PUBLIC")
+reporters = flow.get_reporters() # [Reporter(provider_id=42, dataset_id=93953, ...), ...]
+flow.is_big_dataflow()           # True / False (BigData vs Citus backend)
 
 # Scope to a specific reporter country (provider_id from the reporters list)
-ie = df.for_provider(42)
+ie = flow.for_provider(42)
 
 # All import/export/validation calls below now use provider_id=42 automatically
 ie.import_file(dataset_id=93953, file="ireland.csv")
@@ -138,7 +138,7 @@ zip_bytes = handle.result()
 Retrieve table names, field names, types and required flags for any dataset:
 
 ```python
-schema = df.get_schema(dataset_id=93953)
+schema = flow.get_schema(dataset_id=93953)
 
 for table in schema.tables:
     print(table.name)
@@ -156,6 +156,34 @@ for field in table.fields:
 
 `field.type` is a `FieldType` enum: `TEXT`, `NUMBER_INTEGER`, `NUMBER_DECIMAL`, `DATE`,
 `LINK`, `CODELIST`, `MULTISELECT_CODELIST`, …
+
+### LINK fields and codelists
+
+`LINK` fields reference a column in a reference dataset.  Use `get_codelists()` to export
+the reference data and resolve the valid values, then pass the result to `to_frame()` so
+LINK columns use `pl.Enum` (polars) or `CategoricalDtype` (pandas):
+
+```python
+REF_DS_ID = 12345  # the reference dataset that holds the codelists
+
+codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=REF_DS_ID)
+# {"category": ["Total excluding LULUCF", "Total including LULUCF"],
+#  "scenario": ["WAM", "WEM", "WOM"],
+#  "ry": ["0", "1"]}
+
+# Empty template — LINK columns are now Enum (prevents invalid values at build time)
+template = schema.table("Table1a").to_frame(codelists=codelists)
+
+# You can also enrich the whole dataset at once
+empty_frames = schema.to_frames(codelists=codelists)
+```
+
+You can inspect the reference metadata on any `FieldSchema` without exporting:
+```python
+for field in table.fields:
+    if field.referenced_schema_id:
+        print(f"{field.name} → ref schema {field.referenced_schema_id}, pk {field.referenced_pk_id}")
+```
 
 ## Validate a dataset
 
@@ -183,7 +211,7 @@ for r in releases:
 
 ```python
 # Check whether an import is currently running
-status = df.check_import_process(dataset_id=93953)
+status = flow.check_import_process(dataset_id=93953)
 # {"anyLockAssigned": True, "importInProgress": True}
 
 # Delete all data before a full re-import
@@ -203,13 +231,13 @@ during active reporting periods.
 REF_DS_ID = 12345
 
 # Import new reference data (custodian only)
-df.import_file(dataset_id=REF_DS_ID, file="codelists.csv", replace=True)
+flow.import_file(dataset_id=REF_DS_ID, file="codelists.csv", replace=True)
 
 # Lock the reference dataset (prevent further edits)
-df.set_reference_dataset_updatable(dataset_id=REF_DS_ID, updatable=False)
+flow.set_reference_dataset_updatable(dataset_id=REF_DS_ID, updatable=False)
 
 # Unlock it again
-df.set_reference_dataset_updatable(dataset_id=REF_DS_ID, updatable=True)
+flow.set_reference_dataset_updatable(dataset_id=REF_DS_ID, updatable=True)
 ```
 
 ## Job polling

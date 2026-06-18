@@ -3,10 +3,16 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 from ._http import HttpSession
 from .exceptions import JobFailedError, JobTimeoutError
+
+if TYPE_CHECKING:
+    import pandas  # type: ignore[import-untyped]
+    import polars
+
+    NativeFrame: TypeAlias = polars.DataFrame | pandas.DataFrame
 
 # ── Dataflow models ───────────────────────────────────────────────────────────
 
@@ -32,25 +38,120 @@ class DataflowInfo:
 
 @dataclass(frozen=True)
 class Reporter:
-    """A country/organisation that reports data within a dataflow.
+    """A country/organisation registered to report within a dataflow.
 
     Returned by GET /representative/v1/dataflow/{dataflowId}.
-    ``dataset_id`` is the reporting dataset assigned to this reporter
-    (None if not yet created by the dataflow custodian).
+    Use :meth:`DataflowClient.get_reporting_datasets` to find the actual
+    dataset IDs for each reporter (one dataset per table schema).
     """
     id: int
     dataflow_id: int
     provider_id: int
-    dataset_id: int | None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Reporter":
-        ds = d.get("datasetId")
+    def from_dict(cls, d: dict[str, Any], *, dataflow_id: int | None = None) -> "Reporter":
         return cls(
             id=int(d.get("id", 0)),
-            dataflow_id=int(d.get("dataflowId", 0)),
+            # The API doesn't echo dataflowId in the representatives list response;
+            # caller injects it from the URL parameter.
+            dataflow_id=dataflow_id if dataflow_id is not None else int(d.get("dataflowId", 0)),
             provider_id=int(d.get("dataProviderId", 0)),
-            dataset_id=int(ds) if ds is not None else None,
+        )
+
+    @property
+    def country_code(self) -> str | None:
+        """ISO 3166-1 alpha-2 country code, or None if provider_id is not in the mapping."""
+        from .providers import by_id
+        provider = by_id(self.provider_id)
+        return provider.country_code if provider is not None else None
+
+    @property
+    def country_name(self) -> str | None:
+        """Full country name, or None if provider_id is not in the mapping."""
+        from .providers import by_id
+        provider = by_id(self.provider_id)
+        return provider.country_name if provider is not None else None
+
+
+@dataclass(frozen=True)
+class ReportingDataset:
+    """One reporting dataset — a single table for a single reporter in a dataflow.
+
+    Returned inside ``reportingDatasets`` by GET /dataflow/v1/{dataflowId}.
+    Each reporter (country) has one ``ReportingDataset`` per table schema
+    defined in the dataflow.
+    """
+    id: int
+    name: str        # dataSetName — country/reporter name
+    provider_id: int
+    schema_id: str   # datasetSchema — the dataset schema ID
+    table_name: str  # nameDatasetSchema — e.g. "Table1a", "Table7"
+    status: str      # e.g. "PENDING", "FINAL"
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "ReportingDataset":
+        return cls(
+            id=int(d["id"]),
+            name=d.get("dataSetName") or "",
+            provider_id=int(d["dataProviderId"]),
+            schema_id=d.get("datasetSchema") or "",
+            table_name=d.get("nameDatasetSchema") or "",
+            status=d.get("status") or "",
+        )
+
+    @property
+    def country_code(self) -> str | None:
+        """ISO 3166-1 alpha-2 country code, or None if provider_id is not in the mapping."""
+        from .providers import by_id
+        provider = by_id(self.provider_id)
+        return provider.country_code if provider is not None else None
+
+
+@dataclass(frozen=True)
+class ReferenceDataset:
+    """A shared reference dataset (e.g. codelists) in a dataflow.
+
+    Returned inside ``referenceDatasets`` by GET /dataflow/v1/{dataflowId}.
+    Reference datasets are not tied to any specific reporter; they hold
+    shared lookup data such as allowed codelist values.
+    """
+    id: int
+    name: str              # dataSetName — e.g. "Reference Dataset - Codelist"
+    schema_id: str         # datasetSchema
+    updatable: bool        # whether the dataset can currently be edited
+    public_filename: str | None  # publicFileName
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "ReferenceDataset":
+        return cls(
+            id=int(d["id"]),
+            name=d.get("dataSetName") or "",
+            schema_id=d.get("datasetSchema") or "",
+            updatable=bool(d.get("updatable", False)),
+            public_filename=d.get("publicFileName") or None,
+        )
+
+
+@dataclass(frozen=True)
+class TestDataset:
+    """A test dataset — mirrors a reporting dataset schema for custodian testing.
+
+    Returned inside ``testDatasets`` by GET /dataflow/v1/{dataflowId}.
+    Test datasets share the same schema as their corresponding reporting
+    datasets but are not submitted as part of the official reporting cycle.
+    """
+    __test__ = False  # suppress pytest collection warning
+
+    id: int
+    name: str       # dataSetName — e.g. "Test Dataset - Table1a"
+    schema_id: str  # datasetSchema
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "TestDataset":
+        return cls(
+            id=int(d["id"]),
+            name=d.get("dataSetName") or "",
+            schema_id=d.get("datasetSchema") or "",
         )
 
 
@@ -90,15 +191,21 @@ class FieldSchema:
     type: FieldType
     description: str
     required: bool
+    # LINK / MULTISELECT_LINK fields reference a primary-key field in a reference dataset.
+    referenced_schema_id: str | None = None  # idDataSetSchema of the reference dataset
+    referenced_pk_id: str | None = None      # field schema ID of the PK column in that dataset
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "FieldSchema":
+        ref = d.get("referencedField") or {}
         return cls(
             id=d["id"],
             name=d["name"],
             type=FieldType(d.get("type", "TEXT")),
             description=d.get("description") or "",
             required=bool(d.get("required", False)),
+            referenced_schema_id=ref.get("idDatasetSchema") or None,
+            referenced_pk_id=ref.get("idPk") or None,
         )
 
 
@@ -127,23 +234,29 @@ class TableSchema:
         """All field names in schema order."""
         return [f.name for f in self.fields]
 
-    def to_frame(self) -> Any:
+    def to_frame(self, *, codelists: dict[str, list[str]] | None = None) -> NativeFrame:
         """Return an empty DataFrame with columns and types matching this table.
 
         Useful for building import data with the correct schema, or for
         inspecting what the API expects before uploading.
 
+        Args:
+            codelists: Optional mapping of field name → valid values (from
+                :meth:`DataflowClient.get_codelists`).  When provided, LINK
+                columns use ``pl.Enum`` (polars) or ``CategoricalDtype`` (pandas)
+                instead of plain strings.
+
         Requires ``pip install reportnet[dataframe]``.
-        Tries polars first; falls back to pandas.
+        Returns a ``polars.DataFrame`` if polars is installed, else ``pandas.DataFrame``.
 
         Example::
 
-            schema = client.get_schema(dataset_id=93953)
-            frame = schema.table("Table1a").to_frame()
-            # polars.DataFrame with columns: category (Utf8), cyear (Int64), ...
+            codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=12345)
+            frame = schema.table("Table1a").to_frame(codelists=codelists)
+            # LINK columns are now pl.Enum with the valid categories
         """
         from ._util import table_to_frame
-        return table_to_frame(self)
+        return table_to_frame(self, codelists=codelists)
 
 
 @dataclass(frozen=True)
@@ -169,8 +282,13 @@ class DatasetSchema:
                 return t
         raise KeyError(f"No table named {name!r}; available: {[t.name for t in self.tables]}")
 
-    def to_frames(self) -> dict[str, Any]:
+    def to_frames(self, *, codelists: dict[str, list[str]] | None = None) -> dict[str, NativeFrame]:
         """Return a dict of empty DataFrames, one per table, keyed by table name.
+
+        Args:
+            codelists: Optional mapping of field name → valid values (from
+                :meth:`DataflowClient.get_codelists`).  When provided, LINK
+                columns use ``pl.Enum`` / ``CategoricalDtype`` instead of strings.
 
         Requires ``pip install reportnet[dataframe]``.
 
@@ -182,7 +300,7 @@ class DatasetSchema:
             print(frames["Table1a"].dtypes)
         """
         from ._util import table_to_frame
-        return {t.name: table_to_frame(t) for t in self.tables}
+        return {t.name: table_to_frame(t, codelists=codelists) for t in self.tables}
 
 
 class JobStatus(str, Enum):
