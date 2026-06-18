@@ -17,8 +17,11 @@ from .models import (
     FieldType,
     JobHandle,
     JobStatus,
+    ReferenceDataset,
     Reporter,
+    ReportingDataset,
     TableSchema,
+    TestDataset,
 )
 from .providers import PROVIDERS, DataProvider, by_country, by_group, by_id
 
@@ -29,6 +32,9 @@ __all__ = [
     "JobStatus",
     "DataflowInfo",
     "Reporter",
+    "ReportingDataset",
+    "ReferenceDataset",
+    "TestDataset",
     "DatasetSchema",
     "TableSchema",
     "FieldSchema",

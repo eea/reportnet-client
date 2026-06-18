@@ -22,8 +22,8 @@ from reportnet import ReportnetClient
 client = ReportnetClient(api_key="your-api-key")
 
 # Scope to a dataflow and a specific reporter country
-df = client.for_dataflow(1619)
-ie = df.for_provider(42)   # Ireland's provider ID
+flow = client.for_dataflow(1619)
+ie = flow.for_provider(42)   # Ireland's provider ID
 
 # Import a CSV
 ie.import_file(dataset_id=93953, file="ireland.csv").wait()

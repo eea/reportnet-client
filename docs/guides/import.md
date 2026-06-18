@@ -3,8 +3,8 @@
 ## Basic import
 
 ```python
-df = client.for_dataflow(1619)
-ie = df.for_provider(42)   # reporter's provider_id
+flow = client.for_dataflow(1619)
+ie = flow.for_provider(42)   # reporter's provider_id
 
 handle = ie.import_file(
     dataset_id=93953,

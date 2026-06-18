@@ -22,6 +22,11 @@ SCHEMA_RESPONSE = {
                         "type": "LINK",
                         "description": "Category",
                         "required": True,
+                        "referencedField": {
+                            "idDatasetSchema": "ref-schema-001",
+                            "idPk": "ref-pk-001",
+                            "labelId": None,
+                        },
                     },
                     {
                         "id": "field-002",
@@ -36,6 +41,31 @@ SCHEMA_RESPONSE = {
                         "type": "NUMBER_DECIMAL",
                         "description": "Value",
                         "required": False,
+                    },
+                ],
+            },
+        }
+    ],
+}
+
+REF_SCHEMA_RESPONSE = {
+    "idDataSetSchema": "ref-schema-001",
+    "nameDatasetSchema": "Codelists",
+    "description": "Reference data",
+    "tableSchemas": [
+        {
+            "idTableSchema": "ref-table-001",
+            "nameTableSchema": "Categories",
+            "description": "",
+            "recordSchema": {
+                "idRecordSchema": "ref-record-001",
+                "fieldSchema": [
+                    {
+                        "id": "ref-pk-001",
+                        "name": "code",
+                        "type": "TEXT",
+                        "description": "Code",
+                        "required": True,
                     },
                 ],
             },
@@ -96,6 +126,92 @@ def test_field_type_unknown_does_not_raise(mock_router, client):
     )
     schema = client.get_schema(dataset_id=1)
     assert schema.tables[0].fields[0].type.value == "FUTURE_TYPE"
+
+
+def test_field_schema_parses_referenced_field(mock_router, client):
+    mock_router.get("/dataschema/v1/datasetId/1").mock(
+        return_value=httpx.Response(200, json=SCHEMA_RESPONSE)
+    )
+    schema = client.get_schema(dataset_id=1)
+    category = schema.tables[0].fields[0]
+    assert category.referenced_schema_id == "ref-schema-001"
+    assert category.referenced_pk_id == "ref-pk-001"
+
+    cyear = schema.tables[0].fields[1]
+    assert cyear.referenced_schema_id is None
+    assert cyear.referenced_pk_id is None
+
+
+def test_to_frame_returns_empty_dataframe_with_correct_types(mock_router, client):
+    pytest.importorskip("polars")
+    import polars as pl
+
+    mock_router.get("/dataschema/v1/datasetId/1").mock(
+        return_value=httpx.Response(200, json=SCHEMA_RESPONSE)
+    )
+    schema = client.get_schema(dataset_id=1)
+    table = schema.table("Table1a")
+    frame = table.to_frame()
+
+    assert isinstance(frame, pl.DataFrame)
+    assert frame.shape == (0, 3)
+    assert frame.columns == ["category", "cyear", "cvalue"]
+    assert frame.dtypes[0] == pl.String    # LINK without codelists → String
+    assert frame.dtypes[1] == pl.Int64     # NUMBER_INTEGER
+    assert frame.dtypes[2] == pl.Float64   # NUMBER_DECIMAL
+
+
+def test_to_frame_with_codelists_uses_enum(mock_router, client):
+    pytest.importorskip("polars")
+    import polars as pl
+
+    mock_router.get("/dataschema/v1/datasetId/1").mock(
+        return_value=httpx.Response(200, json=SCHEMA_RESPONSE)
+    )
+    schema = client.get_schema(dataset_id=1)
+    table = schema.table("Table1a")
+
+    codelists = {"category": ["Total excluding LULUCF", "Total including LULUCF"]}
+    frame = table.to_frame(codelists=codelists)
+
+    assert isinstance(frame, pl.DataFrame)
+    assert isinstance(frame.dtypes[0], pl.Enum)
+    assert frame.dtypes[0].categories.to_list() == [
+        "Total excluding LULUCF",
+        "Total including LULUCF",
+    ]
+    assert frame.dtypes[1] == pl.Int64     # unaffected
+
+
+def test_dataset_schema_to_frames(mock_router, client):
+    pytest.importorskip("polars")
+
+    mock_router.get("/dataschema/v1/datasetId/1").mock(
+        return_value=httpx.Response(200, json=SCHEMA_RESPONSE)
+    )
+    schema = client.get_schema(dataset_id=1)
+    frames = schema.to_frames()
+
+    assert list(frames) == ["Table1a"]
+    assert frames["Table1a"].shape == (0, 3)
+
+
+def test_build_codelists():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet._util import build_codelists
+    from reportnet.models import DatasetSchema
+
+    reporting_schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    ref_schema = DatasetSchema.from_dict(REF_SCHEMA_RESPONSE)
+    ref_frames = {"Categories": pl.DataFrame({"code": ["B", "A", "C"]})}
+
+    codelists = build_codelists(reporting_schema, ref_schema, ref_frames)
+
+    # Only the LINK field (category) should be included; values are sorted
+    assert set(codelists) == {"category"}
+    assert codelists["category"] == ["A", "B", "C"]
 
 
 @pytest.mark.integration

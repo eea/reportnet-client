@@ -3,7 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Literal, Union
 
-from .models import DataflowInfo, DatasetSchema, JobHandle, Reporter
+from .models import (
+    DataflowInfo,
+    DatasetSchema,
+    JobHandle,
+    ReferenceDataset,
+    Reporter,
+    ReportingDataset,
+    TestDataset,
+)
 
 if TYPE_CHECKING:
     from .client import ReportnetClient
@@ -67,13 +75,58 @@ class DataflowClient:
 
     # ── Dataflow metadata ─────────────────────────────────────────────────────
 
+    def ping(self) -> bool:
+        """Return True if the API key is valid and the API is reachable."""
+        return self._client.ping(dataflow_id=self._dataflow_id)
+
     def get_dataflow(self) -> DataflowInfo:
         """Return name, type and status of this dataflow."""
         return self._client.get_dataflow(dataflow_id=self._dataflow_id)
 
     def get_reporters(self) -> list[Reporter]:
-        """Return the list of countries/organisations and their dataset IDs."""
+        """Return the list of countries/organisations registered for this dataflow."""
         return self._client.get_reporters(dataflow_id=self._dataflow_id)
+
+    def get_reporting_datasets(self) -> list[ReportingDataset]:
+        """Return all reporting datasets — one per reporter × table schema.
+
+        Filter by ``provider_id`` to get all datasets for a specific country::
+
+            all_ds = flow.get_reporting_datasets()
+            france = [ds for ds in all_ds if ds.provider_id == 56]
+            # [ReportingDataset(id=93954, table_name='Table1a', ...),
+            #  ReportingDataset(id=93958, table_name='Table7', ...), ...]
+        """
+        return self._client.get_reporting_datasets(dataflow_id=self._dataflow_id)
+
+    def get_reference_datasets(self) -> list[ReferenceDataset]:
+        """Return all reference datasets for this dataflow.
+
+        Reference datasets hold shared lookup data such as codelists and are
+        not tied to any specific reporter.  Use the returned ``id`` values as
+        ``ref_dataset_id`` when calling :meth:`get_codelists`.
+
+        Example::
+
+            ref_ds = flow.get_reference_datasets()
+            # [ReferenceDataset(id=93975, name='Reference Dataset - Codelist', ...)]
+            codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=ref_ds[0].id)
+        """
+        return self._client.get_reference_datasets(dataflow_id=self._dataflow_id)
+
+    def get_test_datasets(self) -> list[TestDataset]:
+        """Return all test datasets for this dataflow.
+
+        Test datasets mirror the reporting schema and can be used by custodians
+        to verify validation rules before the reporting period opens.
+
+        Example::
+
+            test_ds = flow.get_test_datasets()
+            # [TestDataset(id=93953, name='Test Dataset - Table1a', ...)]
+            flow.import_file(dataset_id=test_ds[0].id, file="sample.csv")
+        """
+        return self._client.get_test_datasets(dataflow_id=self._dataflow_id)
 
     def is_big_dataflow(self) -> bool:
         """Return True if this is a BigData (DLT2) dataflow."""
@@ -247,6 +300,49 @@ class DataflowClient:
 
     def get_schema(self, *, dataset_id: int) -> DatasetSchema:
         return self._client.get_schema(dataset_id=dataset_id)
+
+    def get_codelists(
+        self,
+        *,
+        dataset_id: int,
+        ref_dataset_id: int,
+        poll_interval: float = 5.0,
+        timeout: float | None = None,
+    ) -> dict[str, list[str]]:
+        """Return valid values for all LINK fields in *dataset_id*.
+
+        Exports the reference dataset (*ref_dataset_id*), then maps each LINK
+        field in the reporting dataset to the sorted list of valid values from
+        the column it references.
+
+        Args:
+            dataset_id: The reporting dataset whose LINK fields to resolve.
+            ref_dataset_id: The reference dataset that holds the codelist data.
+            poll_interval: Seconds between export polling calls.
+            timeout: Maximum seconds to wait for the export job.
+
+        Returns:
+            A dict mapping field name → list of valid string values.
+
+        Example::
+
+            codelists = df.get_codelists(dataset_id=93953, ref_dataset_id=12345)
+            # {"category": ["Total excluding LULUCF", "Total including LULUCF"],
+            #  "scenario": ["WAM", "WEM", "WOM"], "ry": ["0", "1"]}
+
+            # Use when building a template DataFrame — LINK columns become Enum
+            template = (
+                df.get_schema(dataset_id=93953).table("Table1a").to_frame(codelists=codelists)
+            )
+        """
+        from ._util import build_codelists
+
+        reporting_schema = self.get_schema(dataset_id=dataset_id)
+        ref_schema = self.get_schema(dataset_id=ref_dataset_id)
+        ref_frames = self.etl_export(dataset_id=ref_dataset_id).to_frames(
+            poll_interval=poll_interval, timeout=timeout
+        )
+        return build_codelists(reporting_schema, ref_schema, ref_frames)
 
     # ── Dataset management ────────────────────────────────────────────────────
 

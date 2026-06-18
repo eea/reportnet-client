@@ -7,9 +7,9 @@ before building an import CSV.
 ## Retrieve a schema
 
 ```python
-df = client.for_dataflow(1619)
+flow = client.for_dataflow(1619)
 
-schema = df.get_schema(dataset_id=93953)
+schema = flow.get_schema(dataset_id=93953)
 # DatasetSchema(id="...", name="...", tables=(...))
 ```
 
@@ -68,7 +68,82 @@ notation   FieldType.LINK
 Unknown types pass through as opaque strings so the client doesn't break
 when the API adds new types.
 
-## Generate a template CSV
+## LINK fields — resolving valid values
+
+`LINK` fields store references to a column in a **reference dataset**. Each such field
+exposes the source metadata:
+
+```python
+for field in table.fields:
+    if field.referenced_schema_id:
+        print(
+            f"{field.name} → "
+            f"schema {field.referenced_schema_id}, "
+            f"pk field {field.referenced_pk_id}"
+        )
+# category → schema 68dd410245f9450001260d45, pk field 68dd418645f9450001260d6e
+# scenario → schema 68dd410245f9450001260d45, pk field 68dd419a45f9450001260d7a
+```
+
+Use `get_codelists()` to export the reference dataset and resolve the valid values
+in one call. The result maps field name → sorted list of valid strings:
+
+```python
+codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=REF_DATASET_ID)
+# {"category": ["Total excluding LULUCF", "Total including LULUCF"],
+#  "scenario": ["WAM", "WEM", "WOM"],
+#  "ry": ["0", "1"]}
+```
+
+Pass `codelists` to `to_frame()` so LINK columns become `pl.Enum` (polars) or
+`CategoricalDtype` (pandas) — invalid values are rejected at assignment time:
+
+```python
+frame = table.to_frame(codelists=codelists)
+print(frame.schema)
+# {'category': Enum(categories=['Total excluding LULUCF', 'Total including LULUCF']),
+#  'scenario': Enum(categories=['WAM', 'WEM', 'WOM']),
+#  'cyear': Int64, 'cvalue': Float64, ...}
+```
+
+## Get an empty DataFrame with correct types
+
+Returns an empty polars (or pandas) DataFrame whose column names and dtypes
+match the table schema. Useful for building import data programmatically.
+
+```python
+table = schema.table("Table1a")
+frame = table.to_frame()
+# shape: (0, 8)  — zero rows, correct columns and types
+print(frame.schema)
+# {'category': String, 'scenario': String, 'ry': String,
+#  'cyear': Int64, 'gas': String, 'cvalue': Float64, ...}
+
+# Get all tables at once (optionally with codelists)
+frames = schema.to_frames(codelists=codelists)
+# {"Table1a": <empty DataFrame with Enum columns>, ...}
+```
+
+You can then populate it and pass it straight to `import_file()`:
+
+```python
+import polars as pl
+
+empty = schema.table("Table1a").to_frame()
+data = pl.concat([empty, pl.DataFrame({
+    "category": ["Total including LULUCF"],
+    "scenario": ["WEM"],
+    "ry": ["0"],
+    "cyear": [2024],
+    "gas": ["CO2"],
+    "cvalue": [1234.5],
+    "notation": ["NA"],
+    "inventorySubmissionYear": [2024],
+})])
+ie.import_file(dataset_id=93953, file=data, table_schema_id="68dd41f0...")
+```
+
+## Generate a template CSV header
 
 ```python
 table = schema.table("Table1a")

@@ -26,6 +26,12 @@ dev = [
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.25",
 ]
+explore = [
+    "marimo>=0.9",
+    "polars>=0.20",
+    "narwhals>=1.0",
+    {include-group = "dev"},
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reportnet"]
