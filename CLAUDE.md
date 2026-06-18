@@ -19,6 +19,10 @@ uv run pytest
 # Docs (live preview at http://127.0.0.1:8000)
 uv run mkdocs serve
 
+# Interactive exploration with marimo (installs explore group first)
+uv sync --group explore
+uv run marimo edit notebooks/explore.py
+
 # Run a single test file
 uv run pytest tests/test_imports.py
 
