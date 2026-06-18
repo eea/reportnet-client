@@ -5,7 +5,7 @@ from typing import IO, TYPE_CHECKING, Any, Literal, Union
 
 from ._http import HttpSession
 from ._util import to_file_tuple
-from .models import DatasetSchema, JobHandle
+from .models import DataflowInfo, DatasetSchema, JobHandle, Reporter
 
 if TYPE_CHECKING:
     from .dataflow import DataflowClient
@@ -40,6 +40,23 @@ class ReportnetClient:
         """Return a DataflowClient that pre-fills dataflow_id (and optionally provider_id)."""
         from .dataflow import DataflowClient
         return DataflowClient(self, dataflow_id=dataflow_id, provider_id=provider_id)
+
+    # ── Dataflow metadata ─────────────────────────────────────────────────────
+
+    def get_dataflow(self, *, dataflow_id: int) -> DataflowInfo:
+        """GET /dataflow/v1/{dataflowId} — name, type, status of a dataflow."""
+        response = self._http.get(f"/dataflow/v1/{dataflow_id}")
+        return DataflowInfo.from_dict(response.json())
+
+    def get_reporters(self, *, dataflow_id: int) -> list[Reporter]:
+        """GET /representative/v1/dataflow/{dataflowId} — countries/orgs reporting to a dataflow."""
+        response = self._http.get(f"/representative/v1/dataflow/{dataflow_id}")
+        return [Reporter.from_dict(r) for r in response.json()]
+
+    def is_big_dataflow(self, *, dataflow_id: int) -> bool:
+        """GET /dataflow/private/v1/{dataflowId}/isBigDataflow — BigData (DLT2) flag."""
+        response = self._http.get(f"/dataflow/private/v1/{dataflow_id}/isBigDataflow")
+        return bool(response.json())
 
     def close(self) -> None:
         self._http.close()
@@ -284,6 +301,57 @@ class ReportnetClient:
             f"/referenceDataset/{dataset_id}",
             params={"dataflowId": dataflow_id, "updatable": str(updatable).lower()},
         )
+
+    def delete_dataset_data(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+        provider_id: int | None = None,
+        delete_prefilled_tables: bool = False,
+    ) -> None:
+        """DELETE /dataset/v1/{datasetId}/deleteDatasetData — remove all data from a dataset."""
+        params: dict[str, object] = {
+            "dataflowId": dataflow_id,
+            "deletePrefilledTables": str(delete_prefilled_tables).lower(),
+        }
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        self._http.delete(f"/dataset/v1/{dataset_id}/deleteDatasetData", params=params)
+
+    def delete_table_data(
+        self,
+        *,
+        dataset_id: int,
+        table_schema_id: str,
+        dataflow_id: int,
+        provider_id: int | None = None,
+    ) -> None:
+        """DELETE /dataset/v1/{datasetId}/deleteTableData/{tableSchemaId}."""
+        params: dict[str, object] = {"dataflowId": dataflow_id}
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        self._http.delete(
+            f"/dataset/v1/{dataset_id}/deleteTableData/{table_schema_id}", params=params
+        )
+
+    def list_historic_releases(
+        self,
+        *,
+        dataset_id: int,
+        dataflow_id: int,
+    ) -> list[dict[str, object]]:
+        """GET /snapshot/v1/historicReleases — list releases submitted for a dataset."""
+        response = self._http.get(
+            "/snapshot/v1/historicReleases",
+            params={"dataflowId": dataflow_id, "datasetId": dataset_id},
+        )
+        return response.json()  # type: ignore[no-any-return]
+
+    def check_import_process(self, *, dataset_id: int) -> dict[str, object]:
+        """GET /dataset/checkImportProcess/{datasetId} — lock/import status for a dataset."""
+        response = self._http.get(f"/dataset/checkImportProcess/{dataset_id}")
+        return response.json()  # type: ignore[no-any-return]
 
     def _get_validations(
         self, path: str, dataflow_id: int, provider_id: int | None

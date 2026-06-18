@@ -34,6 +34,9 @@ class HttpSession:
     def put(self, url: str, **kwargs: Any) -> httpx.Response:
         return self._request("PUT", url, **kwargs)
 
+    def delete(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self._request("DELETE", url, **kwargs)
+
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         attempt = 0
         while True:

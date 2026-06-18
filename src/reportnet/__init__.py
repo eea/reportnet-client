@@ -10,7 +10,16 @@ from .exceptions import (
     ReportnetError,
 )
 from .keychain import delete_key, get_key, save_key
-from .models import DatasetSchema, FieldSchema, FieldType, JobHandle, JobStatus, TableSchema
+from .models import (
+    DataflowInfo,
+    DatasetSchema,
+    FieldSchema,
+    FieldType,
+    JobHandle,
+    JobStatus,
+    Reporter,
+    TableSchema,
+)
 from .providers import PROVIDERS, DataProvider, by_country, by_group, by_id
 
 __all__ = [
@@ -18,6 +27,8 @@ __all__ = [
     "DataflowClient",
     "JobHandle",
     "JobStatus",
+    "DataflowInfo",
+    "Reporter",
     "DatasetSchema",
     "TableSchema",
     "FieldSchema",

@@ -22,6 +22,9 @@ dev = [
     "narwhals>=1.0",
     "polars>=0.20",
     "keyring>=24",
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.25",
 ]
 
 [tool.hatch.build.targets.wheel]

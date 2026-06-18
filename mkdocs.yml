@@ -1,0 +1,58 @@
+site_name: reportnet-client
+site_description: Python client for the EEA Reportnet 3 REST API
+repo_url: https://github.com/eea/reportnet-client
+repo_name: eea/reportnet-client
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            show_signature_annotations: true
+            separate_signature: true
+            members_order: source
+            docstring_style: google
+
+nav:
+  - Home: index.md
+  - Concepts: concepts.md
+  - Guides:
+    - Import data: guides/import.md
+    - Export data: guides/export.md
+    - Validate a dataset: guides/validation.md
+    - Dataset schema: guides/schema.md
+    - Reference datasets: guides/reference-datasets.md
+    - Provider helpers: guides/providers.md
+  - API Reference:
+    - ReportnetClient: api/client.md
+    - DataflowClient: api/dataflow-client.md
+    - Models: api/models.md
+    - Exceptions: api/exceptions.md
+    - Provider helpers: api/providers.md
+    - Key storage: api/keychain.md
