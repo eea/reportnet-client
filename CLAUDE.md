@@ -16,6 +16,9 @@ uv sync
 # Run all tests
 uv run pytest
 
+# Docs (live preview at http://127.0.0.1:8000)
+uv run mkdocs serve
+
 # Run a single test file
 uv run pytest tests/test_imports.py
 

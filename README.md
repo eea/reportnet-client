@@ -281,4 +281,6 @@ uv run pytest                 # run unit tests (integration tests skipped)
 uv run pytest --integration   # also run live API tests (requires keyring credentials)
 uv run ruff check src tests
 uv run mypy src
+uv run mkdocs serve           # live-preview the documentation at http://127.0.0.1:8000
+uv run mkdocs build --strict  # build static site to ./site/
 ```

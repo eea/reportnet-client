@@ -40,3 +40,4 @@ htmlcov/
 .idea/
 .vscode/
 *.swp
+site/
