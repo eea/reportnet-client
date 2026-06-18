@@ -8,6 +8,52 @@ from typing import Any, Callable
 from ._http import HttpSession
 from .exceptions import JobFailedError, JobTimeoutError
 
+# ── Dataflow models ───────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class DataflowInfo:
+    """Metadata returned by GET /dataflow/v1/{dataflowId}."""
+    id: int
+    name: str
+    description: str
+    type: str    # e.g. "REPORTING", "BUSINESS", "CITIZEN_SCIENCE"
+    status: str  # e.g. "DESIGN", "DRAFT", "PUBLIC"
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "DataflowInfo":
+        return cls(
+            id=int(d["id"]),
+            name=d.get("name") or "",
+            description=d.get("description") or "",
+            type=d.get("type") or "",
+            status=d.get("status") or "",
+        )
+
+
+@dataclass(frozen=True)
+class Reporter:
+    """A country/organisation that reports data within a dataflow.
+
+    Returned by GET /representative/v1/dataflow/{dataflowId}.
+    ``dataset_id`` is the reporting dataset assigned to this reporter
+    (None if not yet created by the dataflow custodian).
+    """
+    id: int
+    dataflow_id: int
+    provider_id: int
+    dataset_id: int | None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Reporter":
+        ds = d.get("datasetId")
+        return cls(
+            id=int(d.get("id", 0)),
+            dataflow_id=int(d.get("dataflowId", 0)),
+            provider_id=int(d.get("dataProviderId", 0)),
+            dataset_id=int(ds) if ds is not None else None,
+        )
+
+
 # ── Schema models ─────────────────────────────────────────────────────────────
 
 class FieldType(str, Enum):
