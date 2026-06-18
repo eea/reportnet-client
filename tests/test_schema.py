@@ -98,6 +98,38 @@ def test_field_type_unknown_does_not_raise(mock_router, client):
     assert schema.tables[0].fields[0].type.value == "FUTURE_TYPE"
 
 
+def test_to_frame_returns_empty_dataframe_with_correct_types(mock_router, client):
+    pytest.importorskip("polars")
+    import polars as pl
+
+    mock_router.get("/dataschema/v1/datasetId/1").mock(
+        return_value=httpx.Response(200, json=SCHEMA_RESPONSE)
+    )
+    schema = client.get_schema(dataset_id=1)
+    table = schema.table("Table1a")
+    frame = table.to_frame()
+
+    assert isinstance(frame, pl.DataFrame)
+    assert frame.shape == (0, 3)
+    assert frame.columns == ["category", "cyear", "cvalue"]
+    assert frame.dtypes[0] == pl.String    # LINK → String
+    assert frame.dtypes[1] == pl.Int64     # NUMBER_INTEGER
+    assert frame.dtypes[2] == pl.Float64   # NUMBER_DECIMAL
+
+
+def test_dataset_schema_to_frames(mock_router, client):
+    pytest.importorskip("polars")
+
+    mock_router.get("/dataschema/v1/datasetId/1").mock(
+        return_value=httpx.Response(200, json=SCHEMA_RESPONSE)
+    )
+    schema = client.get_schema(dataset_id=1)
+    frames = schema.to_frames()
+
+    assert list(frames) == ["Table1a"]
+    assert frames["Table1a"].shape == (0, 3)
+
+
 @pytest.mark.integration
 def test_get_schema_live():
     import reportnet

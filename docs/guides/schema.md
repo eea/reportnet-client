@@ -68,7 +68,44 @@ notation   FieldType.LINK
 Unknown types pass through as opaque strings so the client doesn't break
 when the API adds new types.
 
-## Generate a template CSV
+## Get an empty DataFrame with correct types
+
+Returns an empty polars (or pandas) DataFrame whose column names and dtypes
+match the table schema. Useful for building import data programmatically.
+
+```python
+table = schema.table("Table1a")
+frame = table.to_frame()
+# shape: (0, 8)  — zero rows, correct columns and types
+print(frame.schema)
+# {'category': String, 'scenario': String, 'ry': String,
+#  'cyear': Int64, 'gas': String, 'cvalue': Float64, ...}
+
+# Get all tables at once
+frames = schema.to_frames()
+# {"Table1a": <empty DataFrame>, "Table1b": <empty DataFrame>}
+```
+
+You can then populate it and pass it straight to `import_file()`:
+
+```python
+import polars as pl
+
+empty = schema.table("Table1a").to_frame()
+data = pl.concat([empty, pl.DataFrame({
+    "category": ["Total including LULUCF"],
+    "scenario": ["WEM"],
+    "ry": ["0"],
+    "cyear": [2024],
+    "gas": ["CO2"],
+    "cvalue": [1234.5],
+    "notation": ["NA"],
+    "inventorySubmissionYear": [2024],
+})])
+ie.import_file(dataset_id=93953, file=data, table_schema_id="68dd41f0...")
+```
+
+## Generate a template CSV header
 
 ```python
 table = schema.table("Table1a")

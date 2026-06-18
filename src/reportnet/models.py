@@ -127,6 +127,24 @@ class TableSchema:
         """All field names in schema order."""
         return [f.name for f in self.fields]
 
+    def to_frame(self) -> Any:
+        """Return an empty DataFrame with columns and types matching this table.
+
+        Useful for building import data with the correct schema, or for
+        inspecting what the API expects before uploading.
+
+        Requires ``pip install reportnet[dataframe]``.
+        Tries polars first; falls back to pandas.
+
+        Example::
+
+            schema = client.get_schema(dataset_id=93953)
+            frame = schema.table("Table1a").to_frame()
+            # polars.DataFrame with columns: category (Utf8), cyear (Int64), ...
+        """
+        from ._util import table_to_frame
+        return table_to_frame(self)
+
 
 @dataclass(frozen=True)
 class DatasetSchema:
@@ -150,6 +168,21 @@ class DatasetSchema:
             if t.name == name:
                 return t
         raise KeyError(f"No table named {name!r}; available: {[t.name for t in self.tables]}")
+
+    def to_frames(self) -> dict[str, Any]:
+        """Return a dict of empty DataFrames, one per table, keyed by table name.
+
+        Requires ``pip install reportnet[dataframe]``.
+
+        Example::
+
+            schema = client.get_schema(dataset_id=93953)
+            frames = schema.to_frames()
+            # {"Table1a": <empty DataFrame>, "Table1b": <empty DataFrame>}
+            print(frames["Table1a"].dtypes)
+        """
+        from ._util import table_to_frame
+        return {t.name: table_to_frame(t) for t in self.tables}
 
 
 class JobStatus(str, Enum):

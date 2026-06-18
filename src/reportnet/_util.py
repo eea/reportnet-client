@@ -85,3 +85,65 @@ def _table_name(path: str) -> str:
     """'some/path/TableName.csv' → 'TableName'"""
     leaf = path.rsplit("/", 1)[-1]
     return leaf[:-4] if leaf.lower().endswith(".csv") else leaf
+
+
+# ── Schema → DataFrame ────────────────────────────────────────────────────────
+
+# Reportnet FieldType value → polars dtype.  String types default to pl.String.
+_POLARS_DTYPE_MAP: dict[str, str] = {
+    "NUMBER_INTEGER": "Int64",
+    "NUMBER_DECIMAL": "Float64",
+    "DATE": "Date",
+    "DATETIME": "Datetime",
+    "BOOLEAN": "Boolean",
+    "COORDINATE_LAT": "Float64",
+    "COORDINATE_LONG": "Float64",
+}
+
+# Reportnet FieldType value → pandas dtype.  All others default to "object".
+_PANDAS_DTYPE_MAP: dict[str, str] = {
+    "NUMBER_INTEGER": "Int64",    # nullable integer (pandas >= 1.0)
+    "NUMBER_DECIMAL": "Float64",  # nullable float
+    "DATETIME": "datetime64[ns]",
+    "BOOLEAN": "boolean",
+    "COORDINATE_LAT": "Float64",
+    "COORDINATE_LONG": "Float64",
+}
+
+
+def table_to_frame(table_schema: Any) -> Any:
+    """Return an empty DataFrame whose columns and types match *table_schema*.
+
+    Tries polars first; falls back to pandas.
+    Requires ``pip install reportnet[dataframe]``.
+
+    Args:
+        table_schema: A :class:`~reportnet.TableSchema` instance.
+
+    Returns:
+        An empty polars or pandas DataFrame with the correct schema.
+    """
+    fields = [(f.name, str(f.type.value)) for f in table_schema.fields]
+
+    try:
+        import polars as pl
+
+        schema = {
+            name: getattr(pl, _POLARS_DTYPE_MAP.get(ftype, "String"))
+            for name, ftype in fields
+        }
+        return pl.DataFrame(schema=schema)
+
+    except ImportError:
+        try:
+            import pandas as pd
+
+            return pd.DataFrame({
+                name: pd.array([], dtype=_PANDAS_DTYPE_MAP.get(ftype, "object"))
+                for name, ftype in fields
+            })
+
+        except ImportError:
+            raise ImportError(
+                "polars or pandas is required; install with: pip install reportnet[dataframe]"
+            ) from None
