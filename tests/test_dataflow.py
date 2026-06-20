@@ -170,6 +170,22 @@ def test_get_reporting_datasets_filtered_by_provider(mock_router, client):
     assert {ds.table_name for ds in france} == {"Table1a", "Table7"}
 
 
+def test_scoped_client_get_reporting_datasets_filters_automatically(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    france = client.for_dataflow(1619).for_provider(56).get_reporting_datasets()
+    assert len(france) == 2
+    assert all(ds.provider_id == 56 for ds in france)
+
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    italy = client.for_dataflow(1619).for_provider(64).get_reporting_datasets()
+    assert len(italy) == 1
+    assert italy[0].table_name == "Table1a"
+
+
 def test_reporting_dataset_no_datasets_key(mock_router, client):
     mock_router.get("/dataflow/v1/1619").mock(
         return_value=httpx.Response(200, json={"id": 1619, "name": "x", "status": "DRAFT",
@@ -368,3 +384,42 @@ def test_check_import_process(mock_router, client):
     )
     result = client.check_import_process(dataset_id=1)
     assert result["importInProgress"] is True
+
+
+# ── find_reporter ─────────────────────────────────────────────────────────────
+
+# provider_id=42 maps to "AD" (Andorra) in the PROVIDERS table.
+_FIND_REPORTER_RESPONSE = [
+    {"id": 10, "dataProviderId": 42},   # AD (Andorra)
+    {"id": 11, "dataProviderId": 17},   # IE (Ireland)
+]
+
+
+def test_find_reporter_returns_scoped_client(mock_router, client):
+    from reportnet.dataflow import DataflowClient
+
+    mock_router.get("/representative/v1/dataflow/1619").mock(
+        return_value=httpx.Response(200, json=_FIND_REPORTER_RESPONSE)
+    )
+    ie = client.for_dataflow(1619).find_reporter("IE")
+    assert isinstance(ie, DataflowClient)
+    assert ie._provider_id == 17
+    assert ie._dataflow_id == 1619
+
+
+def test_find_reporter_case_insensitive(mock_router, client):
+    mock_router.get("/representative/v1/dataflow/1619").mock(
+        return_value=httpx.Response(200, json=_FIND_REPORTER_RESPONSE)
+    )
+    ie = client.for_dataflow(1619).find_reporter("ie")
+    assert ie._provider_id == 17
+
+
+def test_find_reporter_unknown_country_raises(mock_router, client):
+    import pytest
+
+    mock_router.get("/representative/v1/dataflow/1619").mock(
+        return_value=httpx.Response(200, json=_FIND_REPORTER_RESPONSE)
+    )
+    with pytest.raises(ValueError, match="XX"):
+        client.for_dataflow(1619).find_reporter("XX")

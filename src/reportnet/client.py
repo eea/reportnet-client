@@ -140,7 +140,7 @@ class ReportnetClient:
         integration_id: int | None = None,
     ) -> JobHandle:
         """POST /dataset/v2/importFileData/{datasetId} — multipart upload."""
-        name, content = to_file_tuple(file, filename)
+        name, content = to_file_tuple(file, filename, delimiter=delimiter)
         params: dict[str, object] = {
             "dataflowId": dataflow_id,
             "replace": str(replace).lower(),
@@ -156,7 +156,7 @@ class ReportnetClient:
         response = self._http.post(
             f"/dataset/v2/importFileData/{dataset_id}",
             params=params,
-            files={"file": (name, content)},
+            files={"file": (name, content, "text/csv")},
         )
         return _make_job(response.json(), self._http, provider_id=provider_id)
 

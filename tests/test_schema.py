@@ -214,6 +214,131 @@ def test_build_codelists():
     assert codelists["category"] == ["A", "B", "C"]
 
 
+def test_validate_frame_empty_frame_no_errors():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet.models import DatasetSchema
+
+    schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    table = schema.table("Table1a")
+    # An empty frame with all required columns passes validation
+    df = pl.DataFrame({
+        "category": pl.Series([], dtype=pl.String),
+        "cyear":    pl.Series([], dtype=pl.Int64),
+        "cvalue":   pl.Series([], dtype=pl.Float64),
+    })
+    errors = table.validate_frame(df)
+    assert errors == []
+
+
+def test_validate_frame_missing_required_column():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet.models import DatasetSchema
+
+    schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    table = schema.table("Table1a")
+    df = pl.DataFrame({"cvalue": [1.0]})  # missing required: category, cyear
+    errors = table.validate_frame(df)
+    assert any("category" in e for e in errors)
+    assert any("cyear" in e for e in errors)
+    assert not any("cvalue" in e for e in errors)  # cvalue is optional
+
+
+def test_validate_frame_invalid_codelist_values():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet.models import DatasetSchema
+
+    schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    table = schema.table("Table1a")
+    codelists = {"category": ["A", "B"]}
+    df = pl.DataFrame({"category": ["A", "INVALID"], "cyear": [2024, 2024]})
+    errors = table.validate_frame(df, codelists=codelists)
+    assert any("INVALID" in e for e in errors)
+
+
+def test_validate_frame_valid_codelist_values():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet.models import DatasetSchema
+
+    schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    table = schema.table("Table1a")
+    codelists = {"category": ["A", "B"]}
+    df = pl.DataFrame({"category": ["A", "B"], "cyear": [2024, 2025]})
+    errors = table.validate_frame(df, codelists=codelists)
+    assert errors == []
+
+
+def test_cast_frame_coerces_numeric_columns():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet.models import DatasetSchema
+
+    schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    table = schema.table("Table1a")
+
+    # Simulate Excel import where cyear arrives as Float64 and cvalue as String
+    raw = pl.DataFrame({
+        "category": ["A"],
+        "cyear":    [2024.0],   # Float64 from Excel
+        "cvalue":   ["1234.5"], # String
+    })
+    typed = table.cast_frame(raw)
+    assert typed["cyear"].dtype == pl.Int64
+    assert typed["cvalue"].dtype == pl.Float64
+
+
+def test_cast_frame_with_codelists_uses_enum():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet.models import DatasetSchema
+
+    schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    table = schema.table("Table1a")
+    codelists = {"category": ["A", "B"]}
+
+    raw = pl.DataFrame({"category": ["A", "B"], "cyear": [2024, 2025]})
+    typed = table.cast_frame(raw, codelists=codelists)
+    assert isinstance(typed["category"].dtype, pl.Enum)
+
+
+def test_cast_frame_invalid_enum_value_raises():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet.models import DatasetSchema
+
+    schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    table = schema.table("Table1a")
+    codelists = {"category": ["A", "B"]}
+
+    raw = pl.DataFrame({"category": ["A", "INVALID"], "cyear": [2024, 2025]})
+    with pytest.raises(ValueError, match="cast"):
+        table.cast_frame(raw, codelists=codelists)
+
+
+def test_cast_frame_missing_required_column_raises():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet.models import DatasetSchema
+
+    schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    table = schema.table("Table1a")
+
+    raw = pl.DataFrame({"cvalue": [1.0]})  # missing required: category, cyear
+    with pytest.raises(ValueError, match="Required column missing"):
+        table.cast_frame(raw)
+
+
 @pytest.mark.integration
 def test_get_schema_live():
     import reportnet
