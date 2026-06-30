@@ -781,3 +781,106 @@ class DataflowClient:
 
         lines.append("}")
         return "\n".join(lines)
+
+    def to_mermaid(self, *, include_test: bool = False) -> str:
+        """Return a Mermaid diagram string describing this dataflow's structure.
+
+        Renders natively in marimo without any CLI tools::
+
+            mo.mermaid(flow.to_mermaid())
+
+        Uses the same structure as :meth:`to_dot`: one cluster per reporter
+        country, coloured by submission status.
+
+        Args:
+            include_test: When True, also show test datasets (one extra API
+                call).
+
+        Returns:
+            A Mermaid ``graph LR`` diagram string.
+        """
+        from collections import defaultdict
+
+        from .providers import by_id as provider_by_id
+
+        info = self.get_dataflow()
+        ref_ds = self.get_reference_datasets()
+        reporting_ds = self.get_reporting_datasets()
+        test_ds = self.get_test_datasets() if include_test else []
+
+        def _esc(s: str) -> str:
+            return (
+                s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("#", "#35;")
+            )
+
+        _STATUS_COLOR: dict[str, str] = {
+            "FINAL": "#A8D5A2",
+            "TECHNICALLY_ACCEPTED": "#C8E6C9",
+            "CORRECTION_REQUESTED": "#FFD580",
+            "PENDING": "#D0D0D0",
+        }
+
+        lines: list[str] = ["graph LR"]
+
+        # Dataflow node (double-border rectangle for distinction)
+        df_label = (
+            f"{_esc(info.name)}<br/>id={info.id} · {_esc(info.type)}<br/>{_esc(info.status)}"
+        )
+        lines.append(f'    df[["{df_label}"]]')
+        lines.append("    style df fill:#2C5F8A,color:white,stroke:#1a3f63")
+        lines.append("")
+
+        # Reference datasets
+        if ref_ds:
+            for rd in ref_ds:
+                nid = f"ref_{rd.id}"
+                label = f"{_esc(rd.name)}<br/>id={rd.id}"
+                lines.append(f'    {nid}["{label}"]')
+                lines.append(f"    style {nid} fill:#4CAF50,color:white,stroke:#388E3C")
+                lines.append(f'    df -->|ref| {nid}')
+            lines.append("")
+
+        # Test datasets
+        if test_ds:
+            for td in test_ds:
+                nid = f"test_{td.id}"
+                label = f"{_esc(td.name)}<br/>id={td.id}"
+                lines.append(f'    {nid}["{label}"]')
+                lines.append(f"    style {nid} fill:#FF9800,color:white,stroke:#E65100")
+                lines.append(f'    df -.->|test| {nid}')
+            lines.append("")
+
+        # Reporter clusters
+        by_provider: dict[int, list[ReportingDataset]] = defaultdict(list)
+        for ds in reporting_ds:
+            by_provider[ds.provider_id].append(ds)
+
+        for provider_id, datasets in sorted(by_provider.items()):
+            provider = provider_by_id(provider_id)
+            if provider is not None:
+                cluster_label = f"{provider.country_code} — {provider.country_name}"
+            else:
+                cluster_label = datasets[0].name or str(provider_id)
+
+            lines.append(f'    subgraph cluster_{provider_id}["{_esc(cluster_label)}"]')
+
+            anchor_nid: str | None = None
+            for ds in sorted(datasets, key=lambda d: d.table_name):
+                nid = f"ds_{ds.id}"
+                if anchor_nid is None:
+                    anchor_nid = nid
+                label = f"{_esc(ds.table_name)}<br/>id={ds.id}<br/>{_esc(ds.status)}"
+                color = _STATUS_COLOR.get(ds.status, "#E8E8E8")
+                lines.append(f'        {nid}["{label}"]')
+                lines.append(f"        style {nid} fill:{color},stroke:#999")
+
+            lines.append("    end")
+            if anchor_nid:
+                lines.append(f'    df -->|reporter| {anchor_nid}')
+            lines.append("")
+
+        return "\n".join(lines)
