@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "reportnet"
-version = "0.1.0"
+name = "reportnet-client"
+version = "0.2.0"
 description = "Python client library for the EEA Reportnet 3 REST API"
 requires-python = ">=3.10"
 dependencies = ["httpx>=0.27"]

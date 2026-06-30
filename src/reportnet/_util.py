@@ -15,8 +15,14 @@ if TYPE_CHECKING:
 def to_file_tuple(
     file: Union[str, Path, bytes, IO[bytes], object],
     filename: str | None,
+    *,
+    delimiter: str = "|",
 ) -> tuple[str, bytes]:
-    """Return (filename, bytes) for any accepted file input."""
+    """Return (filename, bytes) for any accepted file input.
+
+    When *file* is a DataFrame, it is serialized to CSV using *delimiter* so
+    the uploaded bytes match the delimiter sent to the API.
+    """
     if isinstance(file, (str, Path)):
         path = Path(file)
         return filename or path.name, path.read_bytes()
@@ -28,6 +34,10 @@ def to_file_tuple(
         content: bytes = file.read()
         name: str = getattr(file, "name", None) or "upload.csv"
         return filename or name, content
+
+    # DuckDB relation — convert to polars before narwhals sees it
+    if type(file).__name__ == "DuckDBPyRelation":
+        return to_file_tuple(getattr(file, "pl")(), filename, delimiter=delimiter)
 
     # DataFrame via narwhals (supports polars, pandas, modin, …)
     try:
@@ -43,14 +53,14 @@ def to_file_tuple(
     except TypeError:
         raise TypeError(f"Unsupported file type: {type(file).__name__}") from None
 
-    # Polars: write_csv() returns a str
+    # Polars: write_csv() accepts a `separator` kwarg
     if hasattr(native, "write_csv"):
-        result = native.write_csv()
+        result = native.write_csv(separator=delimiter)
         return filename or "upload.csv", result.encode() if isinstance(result, str) else result
 
-    # Pandas-like: to_csv() writes to a buffer
+    # Pandas-like: to_csv() accepts `sep`
     buf = io.BytesIO()
-    native.to_csv(buf, index=False)
+    native.to_csv(buf, index=False, sep=delimiter)
     return filename or "upload.csv", buf.getvalue()
 
 
@@ -162,6 +172,82 @@ def table_to_frame(
     )
 
 
+def cast_frame(
+    table_schema: Any,
+    frame: object,
+    *,
+    codelists: dict[str, list[str]] | None = None,
+) -> NativeFrame:
+    """Cast *frame* columns to the types defined in *table_schema* and validate.
+
+    Useful when reading from Excel or CSV where all columns arrive as strings:
+    numeric, date, and boolean columns are coerced to their schema types; LINK /
+    CODELIST columns are cast to ``Enum`` when *codelists* is provided.
+
+    Raises :class:`ValueError` if any required columns are missing after casting.
+    Enum-cast failures also surface as ``ValueError`` with a clear message.
+
+    Args:
+        table_schema: A :class:`~reportnet.TableSchema` instance.
+        frame: A polars or pandas DataFrame (any narwhals-compatible backend).
+        codelists: Optional mapping returned by
+            :meth:`~reportnet.DataflowClient.get_codelists`.  When provided,
+            LINK columns are cast to ``Enum`` so invalid values fail loudly.
+
+    Returns:
+        The cast DataFrame in the same backend as the input.
+
+    Example::
+
+        import polars as pl
+
+        raw = pl.read_excel("my_data.xlsx", sheet_name="Table1a")
+        # raw["cyear"] is Float64 from Excel, but schema requires Int64
+        typed = schema.table("Table1a").cast_frame(raw, codelists=codelists)
+        # typed["cyear"] is now Int64; LINK columns are Enum
+        flow.import_file(dataset_id=..., file=typed)
+    """
+    try:
+        import narwhals as nw
+    except ImportError:
+        raise ImportError(
+            "narwhals is required; install with: pip install reportnet[dataframe]"
+        ) from None
+
+    dtype_map = _nw_dtype_map()
+    nwf = nw.from_native(frame, eager_only=True)  # type: ignore[call-overload]
+
+    cast_dict: dict[str, Any] = {}
+    for f in table_schema.fields:
+        if f.name not in nwf.columns:
+            continue
+        if codelists and f.name in codelists:
+            cast_dict[f.name] = nw.Enum(codelists[f.name])
+        else:
+            cast_dict[f.name] = dtype_map.get(str(f.type.value), nw.String)
+
+    if cast_dict:
+        try:
+            nwf = nwf.with_columns(
+                [nw.col(col).cast(dtype) for col, dtype in cast_dict.items()]
+            )
+        except Exception as exc:
+            raise ValueError(f"Failed to cast frame columns to schema types: {exc}") from exc
+
+    errors: list[str] = []
+    frame_cols = set(nwf.columns)
+    for f in table_schema.fields:
+        if f.required and f.name not in frame_cols:
+            errors.append(f"Required column missing: {f.name!r} (type: {f.type.value})")
+
+    if errors:
+        raise ValueError(
+            "Frame does not match schema:\n" + "\n".join(f"  - {e}" for e in errors)
+        )
+
+    return nw.to_native(nwf)
+
+
 def build_codelists(
     reporting_schema: Any,
     ref_schema: Any,
@@ -190,6 +276,8 @@ def build_codelists(
         for ref_field in table.fields:
             pk_map[ref_field.id] = (table.name, ref_field.name)
 
+    import narwhals as nw
+
     codelists: dict[str, list[str]] = {}
     for table in reporting_schema.tables:
         for f in table.fields:
@@ -202,11 +290,8 @@ def build_codelists(
             frame = ref_frames.get(ref_table_name)
             if frame is None:
                 continue
-            col = frame[ref_col_name]
-            if hasattr(col, "drop_nulls"):  # polars Series
-                values: list[Any] = col.drop_nulls().unique().sort().to_list()
-            else:  # pandas Series
-                values = sorted(col.dropna().unique().tolist())
+            col = nw.from_native(frame, eager_only=True)[ref_col_name]
+            values: list[Any] = col.drop_nulls().unique().sort().to_list()
             codelists[f.name] = [str(v) for v in values]
 
     return codelists

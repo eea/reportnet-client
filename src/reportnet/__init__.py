@@ -1,3 +1,4 @@
+from ._util import cast_frame, table_to_frame
 from .client import ReportnetClient
 from .dataflow import DataflowClient
 from .exceptions import (
@@ -22,6 +23,8 @@ from .models import (
     ReportingDataset,
     TableSchema,
     TestDataset,
+    ValidationIssue,
+    ValidationResult,
 )
 from .providers import PROVIDERS, DataProvider, by_country, by_group, by_id
 
@@ -39,6 +42,8 @@ __all__ = [
     "TableSchema",
     "FieldSchema",
     "FieldType",
+    "cast_frame",
+    "table_to_frame",
     "ReportnetError",
     "APIError",
     "AuthError",
@@ -46,6 +51,8 @@ __all__ = [
     "RateLimitError",
     "JobFailedError",
     "JobTimeoutError",
+    "ValidationIssue",
+    "ValidationResult",
     "DataProvider",
     "PROVIDERS",
     "by_id",

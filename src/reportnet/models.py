@@ -234,6 +234,99 @@ class TableSchema:
         """All field names in schema order."""
         return [f.name for f in self.fields]
 
+    def validate_frame(
+        self,
+        frame: object,
+        *,
+        codelists: dict[str, list[str]] | None = None,
+    ) -> list[str]:
+        """Check a DataFrame against this table schema before uploading.
+
+        Returns a list of error strings; an empty list means the frame is
+        safe to upload.  Checks:
+
+        - All required columns are present.
+        - CODELIST / LINK column values exist in *codelists* (when provided).
+
+        Does **not** raise; callers decide how to handle errors.
+
+        Args:
+            frame: A polars or pandas DataFrame.
+            codelists: Optional mapping returned by
+                :meth:`DataflowClient.get_codelists`.
+
+        Example::
+
+            errors = schema.table("Table1a").validate_frame(df, codelists=codelists)
+            if errors:
+                raise ValueError("\\n".join(errors))
+        """
+        try:
+            import narwhals as nw
+        except ImportError:
+            raise ImportError(
+                "narwhals is required; install with: pip install reportnet[dataframe]"
+            ) from None
+
+        nwf = nw.from_native(frame, eager_only=True)  # type: ignore[call-overload]
+        frame_cols = set(nwf.columns)
+        errors: list[str] = []
+
+        for f in self.fields:
+            if f.required and f.name not in frame_cols:
+                errors.append(f"Required column missing: {f.name!r} (type: {f.type.value})")
+
+        if codelists:
+            for f in self.fields:
+                if f.name not in codelists or f.name not in frame_cols:
+                    continue
+                valid = set(codelists[f.name])
+                bad = set(nwf[f.name].drop_nulls().unique().to_list()) - valid
+                if bad:
+                    shown = sorted(bad)[:5]
+                    errors.append(
+                        f"Column {f.name!r}: invalid values {shown!r} "
+                        f"(valid: {sorted(codelists[f.name])[:5]!r}…)"
+                    )
+
+        return errors
+
+    def cast_frame(
+        self,
+        frame: object,
+        *,
+        codelists: dict[str, list[str]] | None = None,
+    ) -> NativeFrame:
+        """Cast a DataFrame's columns to this table's schema types.
+
+        Use this when reading data from Excel or CSV where columns arrive as
+        the wrong type (e.g., integers as floats, dates as strings).  LINK /
+        CODELIST columns are cast to ``Enum`` when *codelists* is provided,
+        which rejects invalid values at cast time rather than silently uploading
+        bad data.
+
+        Raises :class:`ValueError` if required columns are missing or if any
+        Enum cast fails.
+
+        Args:
+            frame: A polars or pandas DataFrame.
+            codelists: Optional mapping returned by
+                :meth:`DataflowClient.get_codelists`.
+
+        Returns:
+            The cast DataFrame in the same backend as the input.
+
+        Example::
+
+            import polars as pl
+
+            raw = pl.read_excel("my_data.xlsx", sheet_name="Table1a")
+            typed = schema.table("Table1a").cast_frame(raw, codelists=codelists)
+            flow.import_file(dataset_id=..., file=typed)
+        """
+        from ._util import cast_frame as _cast_frame
+        return _cast_frame(self, frame, codelists=codelists)
+
     def to_frame(self, *, codelists: dict[str, list[str]] | None = None) -> NativeFrame:
         """Return an empty DataFrame with columns and types matching this table.
 
@@ -301,6 +394,150 @@ class DatasetSchema:
         """
         from ._util import table_to_frame
         return {t.name: table_to_frame(t, codelists=codelists) for t in self.tables}
+
+
+# ── Validation result models ──────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    """A single grouped validation result from listGroupValidationsDL."""
+    level: str           # "BLOCKER", "ERROR", "WARNING", "INFO"
+    message: str
+    table: str | None
+    field: str | None
+    entity_type: str | None  # "TABLE", "FIELD", "RECORD", "DATASET"
+    record_count: int
+    short_code: str | None   # rule identifier, e.g. "RY_CHECK"
+
+
+@dataclass
+class ValidationResult:
+    """Parsed result of a validation run returned by DataflowClient.validate().
+
+    Attributes:
+        dataset_id: The dataset that was validated.
+        issues: Parsed list of :class:`ValidationIssue` objects (empty = no issues found).
+        raw: The raw API response dict — inspect this if *issues* looks incomplete.
+
+    Example::
+
+        result = flow.validate(dataset_id=93953)
+        if result.has_blockers:
+            print("Blockers found — cannot submit")
+            print(result.to_frame())
+        elif result.has_errors:
+            print("Errors found")
+        else:
+            print(result.summary())
+    """
+
+    dataset_id: int
+    issues: list[ValidationIssue]
+    raw: dict[str, Any]
+
+    @property
+    def ok(self) -> bool:
+        """True when there are no BLOCKER or ERROR level issues."""
+        return not self.has_errors
+
+    @property
+    def has_blockers(self) -> bool:
+        return any(i.level == "BLOCKER" for i in self.issues)
+
+    @property
+    def has_errors(self) -> bool:
+        return any(i.level in ("BLOCKER", "ERROR") for i in self.issues)
+
+    def summary(self) -> str:
+        """Return a one-line summary of the validation result."""
+        if not self.issues:
+            return f"dataset {self.dataset_id}: no issues"
+        counts: dict[str, int] = {}
+        for issue in self.issues:
+            counts[issue.level] = counts.get(issue.level, 0) + 1
+        parts = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
+        return f"dataset {self.dataset_id}: {sum(counts.values())} issue(s) — {parts}"
+
+    def to_frame(self) -> "NativeFrame":
+        """Return issues as a DataFrame: level, entity_type, table, field, record_count, message."""
+        try:
+            import narwhals as nw
+        except ImportError:
+            raise ImportError(
+                "narwhals is required; install with: pip install reportnet[dataframe]"
+            ) from None
+
+        data: dict[str, list[Any]] = {
+            "level":        [i.level for i in self.issues],
+            "entity_type":  [i.entity_type or "" for i in self.issues],
+            "table":        [i.table or "" for i in self.issues],
+            "field":        [i.field or "" for i in self.issues],
+            "record_count": [i.record_count for i in self.issues],
+            "short_code":   [i.short_code or "" for i in self.issues],
+            "message":      [i.message for i in self.issues],
+        }
+
+        try:
+            import polars as pl
+            return nw.from_dict(data, backend=pl).to_native()
+        except ImportError:
+            pass
+
+        try:
+            import pandas as pd
+            return nw.from_dict(data, backend=pd).to_native()
+        except ImportError:
+            pass
+
+        raise ImportError(
+            "polars or pandas required; install with: pip install reportnet[dataframe]"
+        )
+
+    @classmethod
+    def _from_raw(cls, dataset_id: int, raw: dict[str, Any]) -> "ValidationResult":
+        """Parse listGroupValidationsDL response into structured issues.
+
+        The API response looks like::
+
+            {
+              "idDataset": 93953,
+              "errors": [
+                {
+                  "levelError": "BLOCKER",
+                  "message": "...",
+                  "nameTableSchema": "Table1a",
+                  "nameFieldSchema": "",
+                  "typeEntity": "TABLE",
+                  "numberOfRecords": "3",
+                  "shortCode": "RY_CHECK",
+                  "idRule": null
+                }
+              ],
+              "totalErrors": 1,
+              ...
+            }
+        """
+        issues: list[ValidationIssue] = []
+
+        # API uses "errors" key; fall back to "validations" for forward-compat
+        error_list = raw.get("errors") or raw.get("validations") or []
+        if isinstance(error_list, list):
+            for item in error_list:
+                if not isinstance(item, dict):
+                    continue
+                # numberOfRecords arrives as a string in the live API
+                raw_count = item.get("numberOfRecords") or 0
+                issues.append(ValidationIssue(
+                    level=str(item.get("levelError") or ""),
+                    message=str(item.get("message") or ""),
+                    table=item.get("nameTableSchema") or None,
+                    field=item.get("nameFieldSchema") or None,
+                    entity_type=item.get("typeEntity") or item.get("typeEntityEnum") or None,
+                    record_count=int(raw_count),
+                    short_code=item.get("shortCode") or None,
+                ))
+
+        return cls(dataset_id=dataset_id, issues=issues, raw=raw)
 
 
 class JobStatus(str, Enum):

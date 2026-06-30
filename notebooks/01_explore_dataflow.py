@@ -16,47 +16,52 @@ def _(mo):
     mo.md(r"""
     # Explore a Dataflow
 
-    This notebook walks through the Reportnet client hierarchy:
+    Use this notebook to orient yourself before reporting:
 
-    ```
-    Dataflow  →  Reporters (countries)  →  Datasets  →  Tables / Fields
-    ```
+    - Find your country's datasets and their IDs
+    - Inspect table schemas (column names, types, required fields)
+    - Download an empty DataFrame template to fill in
+    - Review past releases
 
-    API keys are stored in your OS keychain.
-    Save one with: `reportnet.save_key(dataflow_id=..., api_key="...")`
+    **Setup** — save your API key once, then it loads automatically:
+
+    ```python
+    import reportnet
+    reportnet.save_key(dataflow_id=1619, api_key="your-key-here")
+    ```
     """)
     return
 
 
 @app.cell
 def _(mo):
-    mo.md("""
-    ## 1. Connect
-    """)
+    mo.md("## 1. Connect")
     return
 
 
 @app.cell
-def _():
-    import reportnet
-
-    DATAFLOW_ID = 1619
-    return DATAFLOW_ID, reportnet
+def _(mo):
+    dataflow_id_input = mo.ui.number(value=1619, label="Dataflow ID", step=1)
+    dataflow_id_input
+    return (dataflow_id_input,)
 
 
 @app.cell
-def _(DATAFLOW_ID, mo, reportnet):
+def _(dataflow_id_input, mo):
+    import reportnet
+
+    DATAFLOW_ID = int(dataflow_id_input.value)
     try:
         _client = reportnet.ReportnetClient.from_keyring(DATAFLOW_ID)
         _flow = _client.for_dataflow(DATAFLOW_ID)
         if not _flow.ping():
-            raise reportnet.AuthError("API key is invalid or has been revoked")
-        connect_ok = True
+            raise reportnet.AuthError(DATAFLOW_ID, "API key invalid or revoked")
         flow = _flow
+        connect_ok = True
         mo.callout(mo.md(f"Connected to dataflow **{DATAFLOW_ID}**"), kind="success")
     except KeyError:
-        connect_ok = False
         flow = None
+        connect_ok = False
         mo.callout(
             mo.md(
                 f"No API key found for dataflow {DATAFLOW_ID}.  \n"
@@ -65,25 +70,27 @@ def _(DATAFLOW_ID, mo, reportnet):
             kind="danger",
         )
     except reportnet.AuthError:
-        connect_ok = False
         flow = None
-        mo.callout(mo.md("API key is invalid or has been revoked"), kind="danger")
-    return connect_ok, flow
+        connect_ok = False
+        mo.callout(mo.md("API key is invalid or has been revoked."), kind="danger")
+    return DATAFLOW_ID, connect_ok, flow, reportnet
 
 
 @app.cell
 def _(mo):
-    mo.md("""
-    ## 2. Dataflow metadata
-    """)
+    mo.md("## 2. Dataflow overview")
     return
 
 
 @app.cell
-def _(connect_ok, flow, mo):
+def _(connect_ok, flow, mo, reportnet):
     mo.stop(not connect_ok)
     info = flow.get_dataflow()
-    is_big = flow.is_big_dataflow()
+    try:
+        is_big = flow.is_big_dataflow()
+        backend_label = "BigData (DLT2)" if is_big else "Citus"
+    except reportnet.APIError:
+        backend_label = "unknown"
     mo.md(
         f"""
         | | |
@@ -91,16 +98,19 @@ def _(connect_ok, flow, mo):
         | **Name** | {info.name} |
         | **Type** | {info.type} |
         | **Status** | {info.status} |
-        | **Backend** | {"BigData (DLT2)" if is_big else "Citus"} |
+        | **Backend** | {backend_label} |
         """
     )
-    return
+    return (info,)
 
 
 @app.cell
 def _(mo):
     mo.md("""
-    ## 3. Reporters (countries)
+    ## 3. Find your country
+
+    Select your country below.  The client will look up your `provider_id`
+    automatically so you don't need to know it in advance.
     """)
     return
 
@@ -114,55 +124,76 @@ def _(connect_ok, flow, mo):
     reporting_datasets = flow.get_reporting_datasets()
     reference_datasets = flow.get_reference_datasets()
 
-    # Build lookup: provider_id → list of ReportingDataset
     ds_by_provider: dict = {}
     for _ds in reporting_datasets:
         ds_by_provider.setdefault(_ds.provider_id, []).append(_ds)
 
     reporter_table = pl.DataFrame({
-        "country":      [r.country_code or "?"  for r in reporters],
+        "country_code": [r.country_code or "?"  for r in reporters],
         "country_name": [r.country_name or ""   for r in reporters],
         "provider_id":  [r.provider_id           for r in reporters],
         "datasets":     [len(ds_by_provider.get(r.provider_id, [])) for r in reporters],
     })
     mo.ui.table(reporter_table)
-    return ds_by_provider, pl, reference_datasets, reporters
+    return ds_by_provider, pl, reference_datasets, reporter_table, reporters
 
 
 @app.cell
 def _(mo, reporters):
-    provider_selector = mo.ui.dropdown(
+    country_selector = mo.ui.dropdown(
         options={
             f"{r.country_code or '?'} — {r.country_name or r.provider_id}": r.provider_id
             for r in reporters
         },
-        label="Select reporter",
+        label="Select your country",
     )
-    provider_selector
-    return (provider_selector,)
+    country_selector
+    return (country_selector,)
 
 
 @app.cell
-def _(ds_by_provider, flow, mo, provider_selector, reporters):
-    mo.stop(provider_selector.value is None)
-    selected_reporter = next(
-        r for r in reporters if r.provider_id == provider_selector.value
+def _(country_selector, ds_by_provider, flow, mo, reporters):
+    mo.stop(country_selector.value is None)
+    selected_provider_id = country_selector.value
+    selected_reporter = next(r for r in reporters if r.provider_id == selected_provider_id)
+    scoped = flow.for_provider(selected_provider_id)
+    provider_datasets = ds_by_provider.get(selected_provider_id, [])
+    mo.callout(
+        mo.md(
+            f"**{selected_reporter.country_name or '?'}** "
+            f"(provider_id: `{selected_provider_id}`) — "
+            f"**{len(provider_datasets)}** dataset(s)"
+        ),
+        kind="info",
     )
-    scoped = flow.for_provider(selected_reporter.provider_id)
-    provider_datasets = ds_by_provider.get(selected_reporter.provider_id, [])
-    mo.md(
-        f"**{selected_reporter.country_name or '?'}** "
-        f"(provider {selected_reporter.provider_id}) — "
-        f"{len(provider_datasets)} dataset(s)"
-    )
-    return provider_datasets, scoped
+    return provider_datasets, scoped, selected_reporter
+
+
+@app.cell
+def _(mo):
+    mo.md("## 4. Datasets and tables")
+    return
+
+
+@app.cell
+def _(mo, pl, provider_datasets):
+    if provider_datasets:
+        ds_table = pl.DataFrame({
+            "dataset_id": [ds.id        for ds in provider_datasets],
+            "table_name": [ds.table_name for ds in provider_datasets],
+            "status":     [ds.status    for ds in provider_datasets],
+        })
+        mo.ui.table(ds_table)
+    else:
+        mo.callout(mo.md("No datasets found for this reporter."), kind="warn")
+    return
 
 
 @app.cell
 def _(mo, provider_datasets):
     dataset_selector = mo.ui.dropdown(
         options={ds.table_name: ds for ds in provider_datasets},
-        label="Select dataset (table)",
+        label="Select dataset",
     )
     dataset_selector
     return (dataset_selector,)
@@ -173,119 +204,88 @@ def _(dataset_selector, mo):
     mo.stop(dataset_selector.value is None)
     selected_dataset = dataset_selector.value
     mo.md(
-        f"**Dataset ID:** {selected_dataset.id}  \n"
-        f"**Table:** {selected_dataset.table_name}  \n"
-        f"**Status:** {selected_dataset.status}"
+        f"**Dataset ID:** `{selected_dataset.id}`  \n"
+        f"**Table:** `{selected_dataset.table_name}`  \n"
+        f"**Status:** `{selected_dataset.status}`"
     )
     return (selected_dataset,)
 
 
 @app.cell
 def _(mo):
-    mo.md("""
-    ## 4. Dataset schema
-    """)
+    mo.md("## 5. Schema — columns and types")
     return
 
 
 @app.cell
-def _(mo, scoped, selected_dataset):
+def _(mo, pl, scoped, selected_dataset):
     schema = scoped.get_schema(dataset_id=selected_dataset.id)
-    mo.md(
-        f"**{schema.name}** — {len(schema.tables)} table(s):  \n"
-        + "  \n".join(f"- `{t.name}` ({len(t.fields)} fields)" for t in schema.tables)
-    )
-    return (schema,)
-
-
-@app.cell
-def _(mo, schema):
-    table_selector = mo.ui.dropdown(
-        options=[t.name for t in schema.tables],
-        label="Select table",
-    )
-    table_selector
-    return (table_selector,)
-
-
-@app.cell
-def _(mo, pl, schema, table_selector):
-    mo.stop(table_selector.value is None)
-    selected_table = schema.table(table_selector.value)
-
     field_rows = pl.DataFrame({
-        "field":      [f.name                        for f in selected_table.fields],
-        "type":       [f.type.value                  for f in selected_table.fields],
-        "required":   [f.required                    for f in selected_table.fields],
-        "ref_schema": [f.referenced_schema_id or ""  for f in selected_table.fields],
+        "table":    [t.name       for t in schema.tables for f in t.fields],
+        "field":    [f.name       for t in schema.tables for f in t.fields],
+        "type":     [f.type.value for t in schema.tables for f in t.fields],
+        "required": [f.required   for t in schema.tables for f in t.fields],
     })
     mo.vstack([
-        mo.md(f"### `{selected_table.name}` fields"),
+        mo.md(f"**{schema.name}** — {len(schema.tables)} table(s)"),
         mo.ui.table(field_rows),
     ])
-    return (selected_table,)
+    return (schema,)
 
 
 @app.cell
 def _(mo):
     mo.md("""
-    ## 5. Empty DataFrame template
+    ## 6. Empty DataFrame template
 
-    `to_frame()` returns an empty DataFrame with the correct column names
-    and types — use it as a template for building import data.
+    `get_template()` returns one empty, fully-typed DataFrame per table.
+    LINK / CODELIST columns become `pl.Enum` (polars) or `CategoricalDtype`
+    (pandas), so invalid values are rejected at assignment time.
 
-    Pass a `ref_dataset_id` below to resolve LINK field codelists.
-    Leave blank to skip (LINK columns stay as plain strings).
+    The reference dataset is detected automatically — or pick one below to
+    override.
     """)
     return
 
 
 @app.cell
 def _(mo, reference_datasets):
-    _ref_options = {"(none — skip codelist resolution)": None}
+    _ref_options = {"(auto-detect)": None}
     _ref_options.update({ds.name: ds.id for ds in reference_datasets})
-    ref_dataset_selector = mo.ui.dropdown(
-        options=_ref_options,
-        label="Reference dataset",
-    )
-    ref_dataset_selector
-    return (ref_dataset_selector,)
+    ref_selector = mo.ui.dropdown(options=_ref_options, label="Reference dataset (codelists)")
+    ref_selector
+    return (ref_selector,)
 
 
 @app.cell
-def _(mo, ref_dataset_selector, scoped, selected_dataset, selected_table):
-    _ref_id = ref_dataset_selector.value
-    if _ref_id is not None:
-        with mo.status.spinner("Resolving codelists…"):
-            _codelists = scoped.get_codelists(
-                dataset_id=selected_dataset.id,
-                ref_dataset_id=_ref_id,
-            )
-    else:
-        _codelists = None
+def _(mo, ref_selector, scoped, selected_dataset):
+    with mo.status.spinner("Building typed templates…"):
+        templates = scoped.get_template(
+            dataset_id=selected_dataset.id,
+            ref_dataset_id=ref_selector.value,   # None = auto-detect
+        )
 
-    empty = selected_table.to_frame(codelists=_codelists)
-    _schema_str = {col: str(dt) for col, dt in zip(empty.columns, empty.dtypes)}
+    template = next(iter(templates.values()))
+    _schema_str = {col: str(dt) for col, dt in zip(template.columns, template.dtypes)}
     mo.vstack([
-        mo.md(f"Shape: `{empty.shape}`  —  Schema: `{_schema_str}`"),
-        mo.ui.table(empty),
+        mo.md(f"**Tables:** `{list(templates)}`  —  showing `{next(iter(templates))}`"),
+        mo.md(f"**Schema:** `{_schema_str}`"),
+        mo.ui.table(template),
     ])
-    return
+    return (template, templates)
 
 
 @app.cell
 def _(mo):
-    mo.md("""
-    ## 6. Historic releases
-    """)
+    mo.md("## 7. Historic releases")
     return
 
 
 @app.cell
 def _(mo, pl, scoped, selected_dataset):
-    releases = scoped.list_historic_releases(dataset_id=selected_dataset.id)
-    if releases:
-        mo.ui.table(pl.DataFrame(releases))
+    _releases = scoped.list_historic_releases(dataset_id=selected_dataset.id)
+    if _releases:
+        mo.ui.table(pl.DataFrame(_releases))
     else:
         mo.callout(mo.md("No releases found for this dataset."), kind="info")
     return
