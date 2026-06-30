@@ -188,15 +188,35 @@ handle.wait()
 # From a polars or pandas DataFrame (serialised with | delimiter by default)
 handle = ie.import_file(dataset_id=ds.id, file=df)
 handle.wait(poll_interval=5.0, timeout=300.0)
+
+# From a DuckDB relation
+import duckdb
+con = duckdb.connect()
+rel = con.sql("SELECT * FROM 'my_data.parquet'")
+handle = ie.import_file(dataset_id=ds.id, file=rel)
+handle.wait()
 ```
 
 The default delimiter is `|` (pipe). Pass `delimiter=","` if your data uses commas.
 Do **not** include a `record_id` column — Reportnet assigns that on ingestion.
 
+### Multi-table import
+
+`import_frames()` maps table names to DataFrames and uploads each one, waiting for
+completion before starting the next. Table names must match the dataset schema.
+
+```python
+frames = {
+    "Table1a": pl.DataFrame({"category": [...], "cyear": [...], ...}),
+    "Table7":  pl.DataFrame({...}),
+}
+ie.import_frames(dataset_id=ds.id, frames=frames)
+```
+
 ## Export data
 
 All export methods return a `JobHandle`. Call `.result()` for raw bytes or `.to_frames()`
-to get a `dict` of DataFrames (requires `reportnet[dataframe]`).
+to get a `dict` of DataFrames (requires `reportnet-client[dataframe]`).
 
 ```python
 # Full dataset export → dict of DataFrames, one per table
@@ -213,12 +233,38 @@ xlsx_bytes = handle.result()
 
 ## Validate a dataset
 
+`validate()` triggers a validation job, waits for it to finish, and returns a
+`ValidationResult` — no manual polling needed.
+
+```python
+result = ie.validate(
+    dataset_id=ds.id,
+    poll_interval=10.0,
+    timeout=600.0,
+    on_status=lambda s: print(f"  {s}"),   # optional progress callback
+)
+
+print(result.summary())
+# "dataset 93953: 3 issue(s) — 1 BLOCKER, 2 ERROR"
+
+if result.has_blockers:
+    print("Cannot submit — blockers found:")
+    print(result.to_frame())   # polars/pandas DataFrame of all issues
+
+result.ok          # True when no BLOCKER or ERROR issues
+result.has_errors  # True when any BLOCKER or ERROR present
+result.raw         # full API response dict
+```
+
+The `ValidationResult` columns returned by `.to_frame()`:
+`level`, `entity_type`, `table`, `field`, `record_count`, `message`.
+
+For lower-level control (e.g. polling separately from result retrieval):
+
 ```python
 handle = ie.add_validation_job(dataset_id=ds.id)
 handle.wait(poll_interval=10.0, timeout=600.0)
-
-# Read grouped validation results
-results = ie.list_group_validations(dataset_id=ds.id)
+raw = ie.list_group_validations_dl(dataset_id=ds.id)
 ```
 
 ## Reference datasets
