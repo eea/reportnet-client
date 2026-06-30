@@ -572,12 +572,21 @@ class DataflowClient:
 
         codelists: dict[str, list[str]] | None = None
         if _ref_id is not None:
-            codelists = self.get_codelists(
-                dataset_id=dataset_id,
-                ref_dataset_id=_ref_id,
-                poll_interval=poll_interval,
-                timeout=timeout,
-            )
+            from .exceptions import ReportnetError
+            try:
+                codelists = self.get_codelists(
+                    dataset_id=dataset_id,
+                    ref_dataset_id=_ref_id,
+                    poll_interval=poll_interval,
+                    timeout=timeout,
+                )
+            except ReportnetError:
+                # Codelist retrieval can fail for several reasons: the reporter
+                # key may be forbidden from exporting the reference dataset
+                # (403), the export job may fail server-side, or the job may
+                # time out.  Fall back to plain-string LINK columns rather than
+                # failing — numeric, date, and boolean columns are still typed.
+                pass
 
         return schema.to_frames(codelists=codelists)
 
