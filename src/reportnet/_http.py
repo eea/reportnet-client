@@ -50,7 +50,14 @@ class HttpSession:
                 attempt += 1
                 continue
             # Only retry 5xx on GET — POST/PUT may have side effects.
-            if r.status_code in _RETRYABLE_5XX and method == "GET" and not last_attempt:
+            # Don't retry a 500 that is actually a wrapped auth failure.
+            is_auth_500 = r.status_code == 500 and "UNAUTHORIZED" in r.text
+            if (
+                r.status_code in _RETRYABLE_5XX
+                and method == "GET"
+                and not last_attempt
+                and not is_auth_500
+            ):
                 time.sleep(_backoff(attempt))
                 attempt += 1
                 continue
@@ -75,4 +82,13 @@ def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code == 429:
         raise RateLimitError(response.status_code, response.text)
     if response.status_code >= 400:
-        raise APIError(response.status_code, response.text)
+        # Reportnet gateway occasionally wraps auth failures as HTTP 500
+        # (the inner service returns 401 but the gateway swallows it).
+        # Detect this so callers see AuthError rather than a generic APIError,
+        # and so the retry loop does not waste attempts on a bad API key.
+        body = response.text
+        if response.status_code == 500 and (
+            "UNAUTHORIZED" in body or '"401"' in body or "'401'" in body
+        ):
+            raise AuthError(response.status_code, body)
+        raise APIError(response.status_code, body)
