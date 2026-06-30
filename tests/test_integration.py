@@ -219,6 +219,28 @@ def test_validate_frame_with_real_schema(df_1619):
     assert errors == [], f"Empty template should have no errors: {errors}"
 
 
+# ── get_template ──────────────────────────────────────────────────────────────
+
+@pytest.mark.integration
+@pytest.mark.parametrize("dataset_id,label", [
+    (DATASET_ID, "reporting (93953)"),
+    (93652,      "data collection (93652)"),
+    (93951,      "data schema (93951)"),
+])
+def test_get_template(df_1619, dataset_id, label):
+    """get_template() should return a dict of empty typed DataFrames."""
+    pytest.importorskip("polars")
+    import polars as pl
+
+    templates = df_1619.get_template(dataset_id=dataset_id, poll_interval=10.0, timeout=300.0)
+    assert isinstance(templates, dict), f"Expected dict, got {type(templates)}"
+    assert len(templates) > 0, "Expected at least one table"
+    for table_name, frame in templates.items():
+        assert isinstance(frame, pl.DataFrame), f"{table_name}: expected pl.DataFrame"
+        assert frame.shape[0] == 0, f"{table_name}: expected empty frame"
+        print(f"\n  [{label}] {table_name}: {frame.schema}")
+
+
 # ── Export ────────────────────────────────────────────────────────────────────
 
 @pytest.mark.integration
@@ -512,3 +534,26 @@ def test_import_frames_dict(df_1619):
     )
     assert "Table1a" in exported
     print(f"  Table1a after import_frames: {exported['Table1a'].shape[0]} rows")
+
+
+# ── Visualisation ──────────────────────────────────────────────────────────────
+
+@pytest.mark.integration
+def test_to_dot(df_1619):
+    dot = df_1619.to_dot()
+    assert dot.startswith("digraph dataflow {")
+    assert "df [" in dot                   # dataflow node
+    assert "cluster_" in dot               # at least one reporter cluster
+    print(f"\n  DOT length: {len(dot)} chars")
+    # Spot-check: all reporter lines reference lhead with a cluster
+    reporter_edges = [ln for ln in dot.splitlines() if '"reporter"' in ln]
+    assert reporter_edges, "Expected reporter edges"
+    for edge in reporter_edges:
+        assert 'lhead="cluster_' in edge, f"Missing lhead on: {edge}"
+
+
+@pytest.mark.integration
+def test_to_dot_include_test(df_1619):
+    dot = df_1619.to_dot(include_test=True)
+    assert "digraph dataflow {" in dot
+    print(f"\n  DOT with test datasets: {len(dot)} chars")

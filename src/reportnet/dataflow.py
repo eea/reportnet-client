@@ -645,3 +645,139 @@ class DataflowClient:
             dataflow_id=self._dataflow_id,
             updatable=updatable,
         )
+
+    # ── Visualisation ─────────────────────────────────────────────────────────
+
+    def to_dot(self, *, include_test: bool = False) -> str:
+        """Return a Graphviz DOT string describing this dataflow's structure.
+
+        Fetches dataflow metadata, reference datasets, and all reporting
+        datasets (three API calls, no export jobs).  The returned string can
+        be pasted into an online viewer (e.g. graphviz.online) or rendered
+        with the optional ``graphviz`` package::
+
+            dot = flow.to_dot()
+
+            # Render to SVG (pip install reportnet-client[viz])
+            import graphviz
+            graphviz.Source(dot).render("dataflow", format="svg", view=True)
+
+        Node colours:
+        - Blue hexagon — the dataflow itself.
+        - Green — reference datasets.
+        - Orange (dashed) — test datasets (only when *include_test* is True).
+        - Reporter clusters — one per country/provider.  Dataset nodes inside
+          are coloured by submission status: green = FINAL, yellow =
+          TECHNICALLY_ACCEPTED / CORRECTION_REQUESTED, grey = PENDING.
+
+        Args:
+            include_test: When True, also show test datasets (one extra API
+                call).
+
+        Returns:
+            A DOT-language string suitable for Graphviz ``dot`` / ``neato``.
+        """
+        from collections import defaultdict
+
+        from .providers import by_id as provider_by_id
+
+        info = self.get_dataflow()
+        ref_ds = self.get_reference_datasets()
+        reporting_ds = self.get_reporting_datasets()
+        test_ds = self.get_test_datasets() if include_test else []
+
+        def _q(s: str) -> str:
+            return s.replace("\\", "\\\\").replace('"', '\\"')
+
+        lines: list[str] = [
+            "digraph dataflow {",
+            '  graph [rankdir=LR compound=true fontname="Helvetica"'
+            ' splines=ortho nodesep=0.4 ranksep=1.2]',
+            '  node [fontname="Helvetica" fontsize=10 margin="0.15,0.08"]',
+            '  edge [fontname="Helvetica" fontsize=9]',
+            "",
+            "  // Dataflow",
+            (
+                f'  df [label="{_q(info.name)}\\nid={info.id}  ·  {_q(info.type)}'
+                f'\\n{_q(info.status)}"'
+                ' shape=hexagon style=filled fillcolor="#2C5F8A" fontcolor=white width=2]'
+            ),
+            "",
+        ]
+
+        # ── Reference datasets ────────────────────────────────────────────
+        if ref_ds:
+            lines.append("  // Reference datasets")
+            for rd in ref_ds:
+                nid = f"ref_{rd.id}"
+                lines.append(
+                    f'  {nid} [label="{_q(rd.name)}\\nid={rd.id}"'
+                    ' shape=box style="rounded,filled" fillcolor="#4CAF50" fontcolor=white]'
+                )
+                lines.append(f'  df -> {nid} [label="ref" color="#4CAF50" fontcolor="#4CAF50"]')
+            lines.append("")
+
+        # ── Test datasets ─────────────────────────────────────────────────
+        if test_ds:
+            lines.append("  // Test datasets")
+            for td in test_ds:
+                nid = f"test_{td.id}"
+                lines.append(
+                    f'  {nid} [label="{_q(td.name)}\\nid={td.id}"'
+                    ' shape=box style="rounded,filled" fillcolor="#FF9800" fontcolor=white]'
+                )
+                lines.append(
+                    f'  df -> {nid} [label="test" style=dashed color="#FF9800" fontcolor="#FF9800"]'
+                )
+            lines.append("")
+
+        # ── Reporting datasets — grouped by provider ──────────────────────
+        _STATUS_COLOR: dict[str, str] = {
+            "FINAL": "#A8D5A2",
+            "TECHNICALLY_ACCEPTED": "#C8E6C9",
+            "CORRECTION_REQUESTED": "#FFD580",
+            "PENDING": "#D0D0D0",
+        }
+
+        by_provider: dict[int, list[ReportingDataset]] = defaultdict(list)
+        for ds in reporting_ds:
+            by_provider[ds.provider_id].append(ds)
+
+        if by_provider:
+            lines.append("  // Reporter clusters")
+
+        for provider_id, datasets in sorted(by_provider.items()):
+            first = datasets[0]
+            provider = provider_by_id(provider_id)
+            if provider is not None:
+                cluster_label = f"{provider.country_code} — {provider.country_name}"
+            else:
+                cluster_label = first.name or str(provider_id)
+
+            lines.append(f"  subgraph cluster_{provider_id} {{")
+            lines.append(f'    label="{_q(cluster_label)}"')
+            lines.append(
+                '    style=filled fillcolor="#EEF2FF" color="#8090C0"'
+                ' fontname="Helvetica" fontsize=10'
+            )
+
+            anchor_nid: str | None = None
+            for ds in sorted(datasets, key=lambda d: d.table_name):
+                nid = f"ds_{ds.id}"
+                if anchor_nid is None:
+                    anchor_nid = nid
+                color = _STATUS_COLOR.get(ds.status, "#E8E8E8")
+                lines.append(
+                    f'    {nid} [label="{_q(ds.table_name)}\\nid={ds.id}\\n{_q(ds.status)}"'
+                    f' shape=box style=filled fillcolor="{color}"]'
+                )
+
+            lines.append("  }")
+            if anchor_nid:
+                lines.append(
+                    f'  df -> {anchor_nid} [lhead="cluster_{provider_id}"'
+                    ' label="reporter" color="#8090C0" fontcolor="#8090C0"]'
+                )
+
+        lines.append("}")
+        return "\n".join(lines)

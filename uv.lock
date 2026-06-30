@@ -391,6 +391,15 @@ wheels = [
 ]
 
 [[package]]
+name = "graphviz"
+version = "0.21"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/b3/3ac91e9be6b761a4b30d66ff165e54439dcd48b83f4e20d644867215f6ca/graphviz-0.21.tar.gz", hash = "sha256:20743e7183be82aaaa8ad6c93f8893c923bd6658a04c32ee115edb3c8a835f78", size = 200434, upload-time = "2025-06-15T09:35:05.824Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/4c/e0ce1ef95d4000ebc1c11801f9b944fa5910ecc15b5e351865763d8657f8/graphviz-0.21-py3-none-any.whl", hash = "sha256:54f33de9f4f911d7e84e4191749cac8cc5653f815b06738c54db9a15ab8b1e42", size = 47300, upload-time = "2025-06-15T09:35:04.433Z" },
+]
+
+[[package]]
 name = "griffelib"
 version = "2.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1488,8 +1497,8 @@ wheels = [
 ]
 
 [[package]]
-name = "reportnet"
-version = "0.1.0"
+name = "reportnet-client"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -1502,6 +1511,9 @@ dataframe = [
 ]
 keyring = [
     { name = "keyring" },
+]
+viz = [
+    { name = "graphviz" },
 ]
 
 [package.dev-dependencies]
@@ -1533,12 +1545,13 @@ explore = [
 
 [package.metadata]
 requires-dist = [
+    { name = "graphviz", marker = "extra == 'viz'", specifier = ">=0.20" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "keyring", marker = "extra == 'keyring'", specifier = ">=24" },
     { name = "narwhals", marker = "extra == 'dataframe'", specifier = ">=1.0" },
     { name = "polars", marker = "extra == 'dataframe'", specifier = ">=0.20" },
 ]
-provides-extras = ["dataframe", "keyring"]
+provides-extras = ["dataframe", "keyring", "viz"]
 
 [package.metadata.requires-dev]
 dev = [
