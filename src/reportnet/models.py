@@ -407,6 +407,7 @@ class ValidationIssue:
     field: str | None
     entity_type: str | None  # "TABLE", "FIELD", "RECORD", "DATASET"
     record_count: int
+    short_code: str | None   # rule identifier, e.g. "RY_CHECK"
 
 
 @dataclass
@@ -472,6 +473,7 @@ class ValidationResult:
             "table":        [i.table or "" for i in self.issues],
             "field":        [i.field or "" for i in self.issues],
             "record_count": [i.record_count for i in self.issues],
+            "short_code":   [i.short_code or "" for i in self.issues],
             "message":      [i.message for i in self.issues],
         }
 
@@ -532,6 +534,7 @@ class ValidationResult:
                     field=item.get("nameFieldSchema") or None,
                     entity_type=item.get("typeEntity") or item.get("typeEntityEnum") or None,
                     record_count=int(raw_count),
+                    short_code=item.get("shortCode") or None,
                 ))
 
         return cls(dataset_id=dataset_id, issues=issues, raw=raw)
