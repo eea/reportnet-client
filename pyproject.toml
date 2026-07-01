@@ -12,6 +12,7 @@ dependencies = ["httpx>=0.27"]
 [project.optional-dependencies]
 dataframe = ["narwhals>=1.0", "polars>=0.20"]
 keyring = ["keyring>=24"]
+spatial = ["geopandas>=0.14"]
 
 [dependency-groups]
 dev = [

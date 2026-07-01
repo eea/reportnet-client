@@ -39,6 +39,12 @@ def to_file_tuple(
     if type(file).__name__ == "DuckDBPyRelation":
         return to_file_tuple(getattr(file, "pl")(), filename, delimiter=delimiter)
 
+    # GeoDataFrame — geometry column serialised as WKT by geopandas .to_csv()
+    if type(file).__name__ == "GeoDataFrame":
+        buf = io.BytesIO()
+        getattr(file, "to_csv")(buf, index=False, sep=delimiter)
+        return filename or "upload.csv", buf.getvalue()
+
     # DataFrame via narwhals (supports polars, pandas, modin, …)
     try:
         import narwhals as nw
@@ -295,3 +301,56 @@ def build_codelists(
             codelists[f.name] = [str(v) for v in values]
 
     return codelists
+
+
+def to_geodataframe(
+    frame: object,
+    geometry_col: str,
+    *,
+    crs: str = "EPSG:4326",
+) -> Any:
+    """Convert a DataFrame with a WKT geometry column to a ``geopandas.GeoDataFrame``.
+
+    Geometry fields (``POINT``, ``POLYGON``, ``MULTIPOLYGON``, etc.) are stored
+    as WKT strings in Reportnet CSV exports.  This helper parses them into
+    proper shapely geometry objects and returns a ``GeoDataFrame`` ready for
+    spatial analysis or visualisation.
+
+    Requires ``pip install reportnet-client[spatial]``.
+
+    Args:
+        frame: A polars or pandas DataFrame containing a WKT geometry column,
+            typically from :meth:`~reportnet.JobHandle.to_frames`.
+        geometry_col: Name of the column holding WKT geometry strings
+            (e.g. ``"geometry_polygon"`` or ``"geometry_line"``).
+        crs: Coordinate reference system for the output GeoDataFrame.
+            Reportnet geometries are in WGS 84 (``"EPSG:4326"``).
+
+    Returns:
+        A ``geopandas.GeoDataFrame`` with the named column replaced by a
+        proper geometry series.
+
+    Example::
+
+        frames = flow.etl_export(dataset_id=89259).to_frames()
+        gdf = reportnet.to_geodataframe(frames["ProtectedArea"], "geometry_polygon")
+        gdf.plot()
+    """
+    try:
+        import geopandas as gpd  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError(
+            "geopandas is required; install it with: pip install reportnet-client[spatial]"
+        ) from None
+
+    try:
+        import narwhals as nw
+        pdf = nw.from_native(frame, eager_only=True).to_pandas()  # type: ignore[call-overload]
+    except Exception:
+        pdf = frame
+
+    return gpd.GeoDataFrame(
+        pdf,
+        geometry=gpd.GeoSeries.from_wkt(pdf[geometry_col], crs=crs),
+        crs=crs,
+    )

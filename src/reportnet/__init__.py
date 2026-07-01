@@ -1,4 +1,4 @@
-from ._util import cast_frame, table_to_frame
+from ._util import cast_frame, table_to_frame, to_geodataframe
 from .client import ReportnetClient
 from .dataflow import DataflowClient
 from .exceptions import (
@@ -44,6 +44,7 @@ __all__ = [
     "FieldType",
     "cast_frame",
     "table_to_frame",
+    "to_geodataframe",
     "ReportnetError",
     "APIError",
     "AuthError",
