@@ -398,3 +398,33 @@ uv sync --group explore
 uv run marimo edit notebooks/01_explore_dataflow.py    # browse a dataflow interactively
 uv run marimo edit notebooks/02_import_export_pipeline.py  # end-to-end import/export
 ```
+
+## Interactive notebooks
+
+Two [marimo](https://marimo.io) notebooks are included for interactive exploration:
+
+| Notebook | Purpose |
+|---|---|
+| `notebooks/01_explore_dataflow.py` | Browse reporters, inspect schemas, visualise the dataflow structure, download empty templates |
+| `notebooks/02_import_export_pipeline.py` | End-to-end import → validate → export workflow |
+
+**Run locally:**
+
+```bash
+# Install the explore group (marimo + polars)
+uv sync --group explore
+
+# Launch a notebook
+uv run marimo edit notebooks/01_explore_dataflow.py
+```
+
+The notebook opens in your browser. Your API key is loaded from the system keychain automatically (set it once with `reportnet.save_key(dataflow_id, "your-key")`).
+
+**Static preview (read-only, no server needed):**
+
+```bash
+# Export a self-contained HTML snapshot
+uv run marimo export html notebooks/01_explore_dataflow.py -o docs/notebook_preview.html
+```
+
+The exported file can be committed and served via GitHub Pages as a static preview — useful for sharing with colleagues who don't have Python installed. The preview is read-only (no live API calls), but shows the notebook layout and all markdown documentation.

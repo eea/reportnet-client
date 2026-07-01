@@ -106,8 +106,23 @@ def _(connect_ok, flow, mo, reportnet):
 
 @app.cell
 def _(mo):
+    mo.md("## 3. Dataflow structure")
+    return
+
+
+@app.cell
+def _(connect_ok, flow, mo):
+    mo.stop(not connect_ok)
+    with mo.status.spinner("Building diagram…"):
+        _mermaid_src = flow.to_mermaid()
+    mo.mermaid(_mermaid_src)
+    return
+
+
+@app.cell
+def _(mo):
     mo.md("""
-    ## 3. Find your country
+    ## 4. Find your country
 
     Select your country below.  The client will look up your `provider_id`
     automatically so you don't need to know it in advance.
@@ -171,7 +186,7 @@ def _(country_selector, ds_by_provider, flow, mo, reporters):
 
 @app.cell
 def _(mo):
-    mo.md("## 4. Datasets and tables")
+    mo.md("## 5. Datasets and tables")
     return
 
 
@@ -213,7 +228,7 @@ def _(dataset_selector, mo):
 
 @app.cell
 def _(mo):
-    mo.md("## 5. Schema — columns and types")
+    mo.md("## 6. Schema — columns and types")
     return
 
 
@@ -236,7 +251,7 @@ def _(mo, pl, scoped, selected_dataset):
 @app.cell
 def _(mo):
     mo.md("""
-    ## 6. Empty DataFrame template
+    ## 7. Empty DataFrame template
 
     `get_template()` returns one empty, fully-typed DataFrame per table.
     LINK / CODELIST columns become `pl.Enum` (polars) or `CategoricalDtype`
@@ -277,7 +292,7 @@ def _(mo, ref_selector, scoped, selected_dataset):
 
 @app.cell
 def _(mo):
-    mo.md("## 7. Historic releases")
+    mo.md("## 8. Historic releases")
     return
 
 

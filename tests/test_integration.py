@@ -539,21 +539,16 @@ def test_import_frames_dict(df_1619):
 # ── Visualisation ──────────────────────────────────────────────────────────────
 
 @pytest.mark.integration
-def test_to_dot(df_1619):
-    dot = df_1619.to_dot()
-    assert dot.startswith("digraph dataflow {")
-    assert "df [" in dot                   # dataflow node
-    assert "cluster_" in dot               # at least one reporter cluster
-    print(f"\n  DOT length: {len(dot)} chars")
-    # Spot-check: all reporter lines reference lhead with a cluster
-    reporter_edges = [ln for ln in dot.splitlines() if '"reporter"' in ln]
-    assert reporter_edges, "Expected reporter edges"
-    for edge in reporter_edges:
-        assert 'lhead="cluster_' in edge, f"Missing lhead on: {edge}"
+def test_to_mermaid(df_1619):
+    mmd = df_1619.to_mermaid()
+    assert mmd.startswith("graph LR")
+    assert 'df[["' in mmd                  # dataflow node
+    assert "subgraph cluster_" in mmd      # at least one reporter cluster
+    print(f"\n  Mermaid length: {len(mmd)} chars")
 
 
 @pytest.mark.integration
-def test_to_dot_include_test(df_1619):
-    dot = df_1619.to_dot(include_test=True)
-    assert "digraph dataflow {" in dot
-    print(f"\n  DOT with test datasets: {len(dot)} chars")
+def test_to_mermaid_include_test(df_1619):
+    mmd = df_1619.to_mermaid(include_test=True)
+    assert "graph LR" in mmd
+    print(f"\n  Mermaid with test datasets: {len(mmd)} chars")
