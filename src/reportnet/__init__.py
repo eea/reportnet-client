@@ -1,5 +1,5 @@
 from ._util import cast_frame, table_to_frame, to_geodataframe
-from .client import ReportnetClient
+from .client import PRODUCTION_URL, SANDBOX_URL, ReportnetClient
 from .dataflow import DataflowClient
 from .exceptions import (
     APIError,
@@ -29,6 +29,8 @@ from .models import (
 from .providers import PROVIDERS, DataProvider, by_country, by_group, by_id
 
 __all__ = [
+    "PRODUCTION_URL",
+    "SANDBOX_URL",
     "ReportnetClient",
     "DataflowClient",
     "JobHandle",

@@ -46,13 +46,15 @@ def _(mo):
 def _(mo):
     dataflow_id_cfg = mo.ui.number(value=1619, label="Dataflow ID", step=1)
     country_code_cfg = mo.ui.text(value="IE", label="Country code (ISO 3166-1 α-2)")
-    mo.hstack([dataflow_id_cfg, country_code_cfg])
-    return country_code_cfg, dataflow_id_cfg
+    sandbox_cfg = mo.ui.checkbox(label="Sandbox (sandbox.reportnet.europa.eu)")
+    mo.hstack([dataflow_id_cfg, country_code_cfg, sandbox_cfg])
+    return country_code_cfg, dataflow_id_cfg, sandbox_cfg
 
 
 @app.cell
-def _(dataflow_id_cfg, mo):
+def _(dataflow_id_cfg, mo, sandbox_cfg):
     _did = int(dataflow_id_cfg.value)
+    _env = "sandbox" if sandbox_cfg.value else "production"
     key_input_02 = mo.ui.text(
         placeholder="paste your API key here",
         kind="password",
@@ -61,7 +63,7 @@ def _(dataflow_id_cfg, mo):
     )
     save_btn_02 = mo.ui.run_button(label="Save to keychain")
     mo.accordion({
-        f"🔑 Save API key for dataflow {_did}": mo.vstack([
+        f"🔑 Save API key for dataflow {_did} ({_env})": mo.vstack([
             mo.md("Saves the key to your system keychain — only needed once per dataflow."),
             key_input_02,
             save_btn_02,
@@ -71,28 +73,29 @@ def _(dataflow_id_cfg, mo):
 
 
 @app.cell
-def _(dataflow_id_cfg, key_input_02, mo, save_btn_02):
+def _(dataflow_id_cfg, key_input_02, mo, sandbox_cfg, save_btn_02):
     import reportnet as _rn02
     mo.stop(not save_btn_02.value or not key_input_02.value)
-    _rn02.save_key(int(dataflow_id_cfg.value), key_input_02.value)
+    _rn02.save_key(int(dataflow_id_cfg.value), key_input_02.value, sandbox=sandbox_cfg.value)
     mo.callout(mo.md("API key saved — re-run the cell above to connect."), kind="success")
 
 
 @app.cell
-def _(country_code_cfg, dataflow_id_cfg, mo):
+def _(country_code_cfg, dataflow_id_cfg, mo, sandbox_cfg):
     import reportnet
 
     DATAFLOW_ID = int(dataflow_id_cfg.value)
     COUNTRY_CODE = country_code_cfg.value.strip().upper()
 
     try:
-        _client = reportnet.ReportnetClient.from_keyring(DATAFLOW_ID)
+        _client = reportnet.ReportnetClient.from_keyring(DATAFLOW_ID, sandbox=sandbox_cfg.value)
         _flow_base = _client.for_dataflow(DATAFLOW_ID)
         # find_reporter looks up the provider_id from the country code automatically
         flow = _flow_base.find_reporter(COUNTRY_CODE)
         connect_ok = True
+        _env_label = "sandbox" if sandbox_cfg.value else "production"
         mo.callout(
-            mo.md(f"Connected as **{COUNTRY_CODE}** on dataflow **{DATAFLOW_ID}**"),
+            mo.md(f"Connected as **{COUNTRY_CODE}** on dataflow **{DATAFLOW_ID}** ({_env_label})"),
             kind="success",
         )
     except KeyError:

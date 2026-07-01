@@ -4,9 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "reportnet-client"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python client library for the EEA Reportnet 3 REST API"
 requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+]
 dependencies = ["httpx>=0.27"]
 
 [project.optional-dependencies]
@@ -31,6 +34,7 @@ explore = [
     "marimo>=0.9",
     "polars>=0.20",
     "narwhals>=1.0",
+    "matplotlib>=3.7",
     {include-group = "dev"},
 ]
 

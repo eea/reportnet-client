@@ -1,5 +1,7 @@
 # reportnet-client
 
+> **Beta** — the client may change and requires more testing before version 1.0.
+
 Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.eu/rest-api/).
 
 ## Installation
@@ -12,6 +14,9 @@ pip install "reportnet-client[dataframe]"
 
 # Optional: system keychain storage for API keys
 pip install "reportnet-client[keyring]"
+
+# Optional: spatial/GeoDataFrame support (geopandas)
+pip install "reportnet-client[spatial]"
 ```
 
 ## Concepts
@@ -30,6 +35,17 @@ Dataflow  (a reporting obligation, e.g. "EU GHG Inventory")
 - Each **Reporter** (country or organisation) has one or more reporting **Datasets** per dataflow.
 - **Reference Datasets** hold shared codelist/lookup values; they are not tied to a specific reporter.
 
+## Environments
+
+Two environments are available:
+
+| Constant | URL |
+|---|---|
+| `reportnet.PRODUCTION_URL` | `https://api.reportnet.europa.eu` |
+| `reportnet.SANDBOX_URL` | `https://sandbox.reportnet.europa.eu` |
+
+The sandbox requires VPN access and uses separate API keys. By default the client connects to production.
+
 ## Setup
 
 Your API key is generated in Reportnet under **Dataflow Settings → Generate new API key**.
@@ -43,11 +59,17 @@ so they never appear in source code:
 ```python
 import reportnet
 
-# Save once (e.g. in a setup script or terminal)
+# Production key (default)
 reportnet.save_key(dataflow_id=1619, api_key="your-api-key")
+
+# Sandbox key — stored separately, won't collide with production
+reportnet.save_key(dataflow_id=1619, api_key="your-sandbox-key", sandbox=True)
 
 # Load at runtime — no key in code
 client = reportnet.ReportnetClient.from_keyring(dataflow_id=1619)
+
+# Sandbox client — picks sandbox URL and sandbox key automatically
+client = reportnet.ReportnetClient.from_keyring(dataflow_id=1619, sandbox=True)
 ```
 
 ## Reporter workflow
@@ -231,6 +253,46 @@ handle = ie.export_file(dataset_id=ds.id, table_schema_id="abc123", mime_type="x
 xlsx_bytes = handle.result()
 ```
 
+`etl_export` automatically picks the correct API version for the dataflow backend:
+v4 (ZIP of CSVs) for BigData/DLT2 dataflows, v3 (ZIP containing JSON) for Citus dataflows.
+
+## Spatial data
+
+Datasets with geometry fields (`POINT`, `POLYGON`, `MULTIPOLYGON`, etc.) store
+values as WKT strings (v4 exports) or GeoJSON strings (v3 exports).
+`to_geodataframe()` handles both formats automatically:
+
+```python
+pip install "reportnet-client[spatial]"
+```
+
+```python
+import reportnet
+
+client = reportnet.ReportnetClient.from_keyring(1570)
+flow = client.for_dataflow(1570)
+fr = flow.find_reporter("FR")
+
+# Export and convert to GeoDataFrame in two lines
+frames = fr.etl_export(dataset_id=89259).to_frames()
+gdf = reportnet.to_geodataframe(frames["ProtectedArea"], "geometry_polygon")
+
+# Now use it as any geopandas GeoDataFrame
+gdf.plot()
+gdf.to_file("protected_areas.gpkg", driver="GPKG")
+```
+
+`to_geodataframe()` detects WKT vs GeoJSON automatically. The geometry column is
+replaced in-place with parsed shapely geometries; all other columns are preserved.
+The default CRS is `EPSG:4326`.
+
+You can also upload a GeoDataFrame back to Reportnet — geometry is serialised as
+WKT via geopandas' `.to_csv()`:
+
+```python
+fr.import_file(dataset_id=89259, file=gdf)
+```
+
 ## Validate a dataset
 
 `validate()` triggers a validation job, waits for it to finish, and returns a
@@ -397,28 +459,33 @@ uv run mkdocs serve           # live-preview the documentation at http://127.0.0
 uv sync --group explore
 uv run marimo edit notebooks/01_explore_dataflow.py    # browse a dataflow interactively
 uv run marimo edit notebooks/02_import_export_pipeline.py  # end-to-end import/export
+uv run marimo edit notebooks/03_spatial_geodataframe.py    # spatial data → GeoDataFrame
 ```
 
 ## Interactive notebooks
 
-Two [marimo](https://marimo.io) notebooks are included for interactive exploration:
+Three [marimo](https://marimo.io) notebooks are included for interactive exploration:
 
 | Notebook | Purpose |
 |---|---|
 | `notebooks/01_explore_dataflow.py` | Browse reporters, inspect schemas, visualise the dataflow structure, download empty templates |
 | `notebooks/02_import_export_pipeline.py` | End-to-end import → validate → export workflow |
+| `notebooks/03_spatial_geodataframe.py` | Export spatial data and convert to a geopandas GeoDataFrame |
 
 **Run locally:**
 
 ```bash
-# Install the explore group (marimo + polars)
+# Install the explore group (marimo + polars); add geopandas for notebook 03
 uv sync --group explore
+pip install "reportnet-client[spatial]"   # for notebook 03
 
 # Launch a notebook
 uv run marimo edit notebooks/01_explore_dataflow.py
 ```
 
-The notebook opens in your browser. Your API key is loaded from the system keychain automatically (set it once with `reportnet.save_key(dataflow_id, "your-key")`).
+The notebook opens in your browser. Your API key is loaded from the system keychain automatically
+(set it once with `reportnet.save_key(dataflow_id, "your-key")`). All three notebooks have a
+**Sandbox** checkbox to connect to `sandbox.reportnet.europa.eu` instead of production.
 
 **Static preview (read-only, no server needed):**
 
@@ -427,4 +494,6 @@ The notebook opens in your browser. Your API key is loaded from the system keych
 uv run marimo export html notebooks/01_explore_dataflow.py -o docs/notebook_preview.html
 ```
 
-The exported file can be committed and served via GitHub Pages as a static preview — useful for sharing with colleagues who don't have Python installed. The preview is read-only (no live API calls), but shows the notebook layout and all markdown documentation.
+The exported file can be committed and served via GitHub Pages as a static preview — useful for
+sharing with colleagues who don't have Python installed. The preview is read-only (no live API
+calls), but shows the notebook layout and all markdown documentation.

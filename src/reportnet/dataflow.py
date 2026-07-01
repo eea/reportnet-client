@@ -55,10 +55,12 @@ class DataflowClient:
         dataflow_id: int,
         *,
         provider_id: int | None = None,
+        country_code: str | None = None,
     ) -> None:
         self._client = client
         self._dataflow_id = dataflow_id
         self._provider_id = provider_id
+        self._country_code = country_code
 
     def _pid(self, override: int | None) -> int | None:
         """Return override if given, else fall back to the stored provider_id."""
@@ -114,7 +116,11 @@ class DataflowClient:
                 f"Multiple reporters for {code!r} (provider_ids: {ids}). "
                 f"Use get_reporters() to pick one, then for_provider()."
             )
-        return self.for_provider(matches[0].provider_id)
+        return DataflowClient(
+            self._client, self._dataflow_id,
+            provider_id=matches[0].provider_id,
+            country_code=code,
+        )
 
     # ── Dataflow metadata ─────────────────────────────────────────────────────
 
@@ -297,14 +303,40 @@ class DataflowClient:
         *,
         dataset_id: int,
         provider_id: int | None = None,
+        data_provider_codes: str | None = None,
         table_schema_id: str | None = None,
         include_attachments: bool = False,
-        version: int = 4,
+        version: int | None = None,
     ) -> JobHandle:
+        """Export a dataset via the ETL endpoint.
+
+        *version* selects the API version:
+
+        - ``4`` (default for BigData/DLT2 dataflows) — asynchronous, returns a ZIP of CSVs
+        - ``3`` (default for Citus dataflows) — asynchronous, returns JSON;
+          requires a country code (``dataProviderCodes``), injected automatically
+          when the client was created via :meth:`find_reporter`.
+
+        When *version* is ``None`` (the default), the correct version is chosen
+        automatically by calling :meth:`is_big_dataflow`.
+
+        Args:
+            data_provider_codes: ISO 3166-1 alpha-2 country code passed as
+                ``dataProviderCodes`` to the v3 endpoint (e.g. ``"FR"``).
+                Inferred automatically when the client was obtained via
+                :meth:`find_reporter`.
+        """
+        if version is None:
+            version = 4 if self.is_big_dataflow() else 3
+        # v3 uses dataProviderCodes (country code) instead of providerId.
+        # Sending both causes a 403, so only pass providerId for v4+.
+        dpc = data_provider_codes or (self._country_code if version == 3 else None)
+        pid = None if version == 3 else self._pid(provider_id)
         return self._client.etl_export(
             dataset_id=dataset_id,
             dataflow_id=self._dataflow_id,
-            provider_id=self._pid(provider_id),
+            provider_id=pid,
+            data_provider_codes=dpc,
             table_schema_id=table_schema_id,
             include_attachments=include_attachments,
             version=version,
