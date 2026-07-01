@@ -1,4 +1,4 @@
-# reportnet-client
+# reportnet-client (Beta)
 
 > **Beta** — the client may change and requires more testing before version 1.0.
 
