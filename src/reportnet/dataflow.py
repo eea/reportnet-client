@@ -741,7 +741,13 @@ class DataflowClient:
 
             n_tables = len(datasets)
             n_final = sum(1 for d in datasets if d.status == "FINAL")
-            full_label = f"{_esc(label)}<br/><small>{n_final}/{n_tables} FINAL</small>"
+            ds_lines = "<br/>".join(
+                f"<small>{_esc(ds.table_name)}: {ds.id}</small>"
+                for ds in sorted(datasets, key=lambda d: d.table_name)
+            )
+            full_label = (
+                f"{_esc(label)}<br/>{ds_lines}<br/><small>{n_final}/{n_tables} FINAL</small>"
+            )
 
             nid = f"p_{provider_id}"
             lines.append(f'    {nid}["{full_label}"]')
