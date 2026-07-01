@@ -23,27 +23,53 @@ def _(mo):
     - Download an empty DataFrame template to fill in
     - Review past releases
 
-    **Setup** — save your API key once, then it loads automatically:
-
-    ```python
-    import reportnet
-    reportnet.save_key(dataflow_id=1619, api_key="your-key-here")
-    ```
+    **Setup** — enter your Dataflow ID below, then expand *Save API key* to store
+    your key in the system keychain (once only).
     """)
     return
 
 
 @app.cell
 def _(mo):
-    mo.md("## 1. Connect")
+    mo.md("""
+    ## 1. Connect
+    """)
     return
 
 
 @app.cell
 def _(mo):
-    dataflow_id_input = mo.ui.number(value=1619, label="Dataflow ID", step=1)
+    dataflow_id_input = mo.ui.number(value=1570, label="Dataflow ID", step=1)
     dataflow_id_input
     return (dataflow_id_input,)
+
+
+@app.cell
+def _(dataflow_id_input, mo):
+    _did = int(dataflow_id_input.value)
+    key_input = mo.ui.text(
+        placeholder="paste your API key here",
+        kind="password",
+        label="API key",
+        full_width=True,
+    )
+    save_btn = mo.ui.run_button(label="Save to keychain")
+    mo.accordion({
+        f"🔑 Save API key for dataflow {_did}": mo.vstack([
+            mo.md("Saves the key to your system keychain — only needed once per dataflow."),
+            key_input,
+            save_btn,
+        ])
+    })
+    return key_input, save_btn
+
+
+@app.cell
+def _(dataflow_id_input, key_input, mo, save_btn):
+    import reportnet as _rn
+    mo.stop(not save_btn.value or not key_input.value)
+    _rn.save_key(int(dataflow_id_input.value), key_input.value)
+    mo.callout(mo.md("API key saved — re-run the cell above to connect."), kind="success")
 
 
 @app.cell
@@ -73,12 +99,14 @@ def _(dataflow_id_input, mo):
         flow = None
         connect_ok = False
         mo.callout(mo.md("API key is invalid or has been revoked."), kind="danger")
-    return DATAFLOW_ID, connect_ok, flow, reportnet
+    return connect_ok, flow, reportnet
 
 
 @app.cell
 def _(mo):
-    mo.md("## 2. Dataflow overview")
+    mo.md("""
+    ## 2. Dataflow overview
+    """)
     return
 
 
@@ -101,12 +129,14 @@ def _(connect_ok, flow, mo, reportnet):
         | **Backend** | {backend_label} |
         """
     )
-    return (info,)
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md("## 3. Dataflow structure")
+    mo.md("""
+    ## 3. Dataflow structure
+    """)
     return
 
 
@@ -150,7 +180,7 @@ def _(connect_ok, flow, mo):
         "datasets":     [len(ds_by_provider.get(r.provider_id, [])) for r in reporters],
     })
     mo.ui.table(reporter_table)
-    return ds_by_provider, pl, reference_datasets, reporter_table, reporters
+    return ds_by_provider, pl, reference_datasets, reporters
 
 
 @app.cell
@@ -167,7 +197,7 @@ def _(mo, reporters):
 
 
 @app.cell
-def _(country_selector, ds_by_provider, flow, mo, reporters):
+def _(country_selector, ds_by_provider: dict, flow, mo, reporters):
     mo.stop(country_selector.value is None)
     selected_provider_id = country_selector.value
     selected_reporter = next(r for r in reporters if r.provider_id == selected_provider_id)
@@ -181,12 +211,14 @@ def _(country_selector, ds_by_provider, flow, mo, reporters):
         ),
         kind="info",
     )
-    return provider_datasets, scoped, selected_reporter
+    return provider_datasets, scoped
 
 
 @app.cell
 def _(mo):
-    mo.md("## 5. Datasets and tables")
+    mo.md("""
+    ## 5. Datasets and tables
+    """)
     return
 
 
@@ -228,7 +260,9 @@ def _(dataset_selector, mo):
 
 @app.cell
 def _(mo):
-    mo.md("## 6. Schema — columns and types")
+    mo.md("""
+    ## 6. Schema — columns and types
+    """)
     return
 
 
@@ -245,7 +279,7 @@ def _(mo, pl, scoped, selected_dataset):
         mo.md(f"**{schema.name}** — {len(schema.tables)} table(s)"),
         mo.ui.table(field_rows),
     ])
-    return (schema,)
+    return
 
 
 @app.cell
@@ -287,12 +321,14 @@ def _(mo, ref_selector, scoped, selected_dataset):
         mo.md(f"**Schema:** `{_schema_str}`"),
         mo.ui.table(template),
     ])
-    return (template, templates)
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md("## 8. Historic releases")
+    mo.md("""
+    ## 8. Historic releases
+    """)
     return
 
 
