@@ -1,22 +1,26 @@
-# reportnet-client
+# reportnet-client (Beta)
 
 > **Beta** — the client may change and requires more testing before version 1.0.
 
 Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.eu/rest-api/).
 
+**[Full documentation](https://eea.github.io/reportnet-client/)**
+
 ## Installation
 
+Not yet on PyPI — install directly from GitHub:
+
 ```bash
-pip install reportnet-client
+pip install git+https://github.com/eea/reportnet-client.git
 
 # Optional: DataFrame support (polars, pandas, modin — via narwhals)
-pip install "reportnet-client[dataframe]"
+pip install "reportnet-client[dataframe] @ git+https://github.com/eea/reportnet-client.git"
 
 # Optional: system keychain storage for API keys
-pip install "reportnet-client[keyring]"
+pip install "reportnet-client[keyring] @ git+https://github.com/eea/reportnet-client.git"
 
 # Optional: spatial/GeoDataFrame support (geopandas)
-pip install "reportnet-client[spatial]"
+pip install "reportnet-client[spatial] @ git+https://github.com/eea/reportnet-client.git"
 ```
 
 ## Concepts
