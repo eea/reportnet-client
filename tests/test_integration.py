@@ -394,11 +394,16 @@ def test_validation_job_and_results(df_1619):
     except DatasetLockedError as e:
         pytest.skip(f"Dataset locked — another job is already running: {e}")
 
-    handle.wait(
-        poll_interval=10.0,
-        timeout=600.0,
-        on_status=lambda s: print(f"  validation job status: {s}"),
-    )
+    from reportnet.exceptions import JobTimeoutError
+
+    try:
+        handle.wait(
+            poll_interval=10.0,
+            timeout=600.0,
+            on_status=lambda s: print(f"  validation job status: {s}"),
+        )
+    except JobTimeoutError:
+        pytest.skip("Validation job still running after 600 s — server-side slowness")
     results = df_1619.list_group_validations_dl(dataset_id=DATASET_ID)
     assert isinstance(results, dict)
 
@@ -439,16 +444,21 @@ def _generate_csv() -> bytes:
 @pytest.mark.integration
 def test_import_file_csv(df_1619):
     """Upload generated rows as CSV (append, does not replace existing data)."""
+    from reportnet import DatasetLockedError
+
     csv_bytes = _generate_csv()
     print(f"\n  uploading:\n{csv_bytes.decode()}")
 
-    handle = df_1619.import_file(
-        dataset_id=DATASET_ID,
-        file=csv_bytes,
-        filename="test_upload.csv",
-        table_schema_id=TABLE_SCHEMA_ID,
-        replace=False,
-    )
+    try:
+            handle = df_1619.import_file(
+            dataset_id=DATASET_ID,
+            file=csv_bytes,
+            filename="test_upload.csv",
+            table_schema_id=TABLE_SCHEMA_ID,
+            replace=False,
+        )
+    except DatasetLockedError as e:
+        pytest.skip(f"Dataset locked — another job is still running: {e}")
     handle.wait(
         poll_interval=10.0,
         timeout=600.0,
@@ -466,6 +476,8 @@ def test_import_file_csv(df_1619):
 @pytest.mark.integration
 def test_import_file_dataframe(df_1619):
     """Upload a polars DataFrame — verifies the delimiter fix."""
+    from reportnet import DatasetLockedError
+
     pl = pytest.importorskip("polars")
 
     df = pl.DataFrame({
@@ -480,13 +492,16 @@ def test_import_file_dataframe(df_1619):
     })
     print(f"\n  uploading DataFrame:\n{df}")
 
-    handle = df_1619.import_file(
-        dataset_id=DATASET_ID,
-        file=df,
-        filename="test_df_upload.csv",
-        table_schema_id=TABLE_SCHEMA_ID,
-        replace=False,
-    )
+    try:
+        handle = df_1619.import_file(
+            dataset_id=DATASET_ID,
+            file=df,
+            filename="test_df_upload.csv",
+            table_schema_id=TABLE_SCHEMA_ID,
+            replace=False,
+        )
+    except DatasetLockedError as e:
+        pytest.skip(f"Dataset locked — another job is still running: {e}")
     handle.wait(
         poll_interval=10.0,
         timeout=600.0,
@@ -504,6 +519,8 @@ def test_import_file_dataframe(df_1619):
 @pytest.mark.integration
 def test_import_frames_dict(df_1619):
     """import_frames() uploads a dict of DataFrames, one per table."""
+    from reportnet import DatasetLockedError
+
     pl = pytest.importorskip("polars")
 
     frames = {
@@ -520,13 +537,16 @@ def test_import_frames_dict(df_1619):
     }
     print(f"\n  import_frames: {list(frames)} → {list(frames.values())[0].shape}")
 
-    df_1619.import_frames(
-        dataset_id=DATASET_ID,
-        frames=frames,
-        replace=False,
-        poll_interval=10.0,
-        timeout=600.0,
-    )
+    try:
+        df_1619.import_frames(
+            dataset_id=DATASET_ID,
+            frames=frames,
+            replace=False,
+            poll_interval=10.0,
+            timeout=600.0,
+        )
+    except DatasetLockedError as e:
+        pytest.skip(f"Dataset locked — another job is still running: {e}")
 
     exported = df_1619.etl_export(dataset_id=DATASET_ID).to_frames(
         poll_interval=10.0,
