@@ -39,7 +39,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    dataflow_id_input = mo.ui.number(value=1570, label="Dataflow ID", step=1)
+    dataflow_id_input = mo.ui.number(value=1570, label="1570", step=1)
     dataflow_id_input
     return (dataflow_id_input,)
 
@@ -70,28 +70,29 @@ def _(dataflow_id_input, key_input, mo, save_btn):
     mo.stop(not save_btn.value or not key_input.value)
     _rn.save_key(int(dataflow_id_input.value), key_input.value)
     mo.callout(mo.md("API key saved — re-run the cell above to connect."), kind="success")
+    return
 
 
 @app.cell
 def _(dataflow_id_input, mo):
     import reportnet
 
-    DATAFLOW_ID = int(dataflow_id_input.value)
+    _did = int(dataflow_id_input.value)
     try:
-        _client = reportnet.ReportnetClient.from_keyring(DATAFLOW_ID)
-        _flow = _client.for_dataflow(DATAFLOW_ID)
+        _client = reportnet.ReportnetClient.from_keyring(_did)
+        _flow = _client.for_dataflow(_did)
         if not _flow.ping():
-            raise reportnet.AuthError(DATAFLOW_ID, "API key invalid or revoked")
+            raise reportnet.AuthError(_did, "API key invalid or revoked")
         flow = _flow
         connect_ok = True
-        mo.callout(mo.md(f"Connected to dataflow **{DATAFLOW_ID}**"), kind="success")
+        mo.callout(mo.md(f"Connected to dataflow **{_did}**"), kind="success")
     except KeyError:
         flow = None
         connect_ok = False
         mo.callout(
             mo.md(
-                f"No API key found for dataflow {DATAFLOW_ID}.  \n"
-                f"Run: `reportnet.save_key({DATAFLOW_ID}, 'your-key')`"
+                f"No API key found for dataflow {_did}.  \n"
+                f"Expand *Save API key* above to store your key."
             ),
             kind="danger",
         )
