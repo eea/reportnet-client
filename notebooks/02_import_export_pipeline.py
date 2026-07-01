@@ -30,12 +30,8 @@ def _(mo):
 
     ---
 
-    **Quick setup** (run once in a terminal):
-
-    ```python
-    import reportnet
-    reportnet.save_key(dataflow_id=1619, api_key="your-api-key")
-    ```
+    **Setup** — enter your Dataflow ID below, then expand *Save API key* to store
+    your key in the system keychain (once only).
     """)
     return
 
@@ -48,28 +44,38 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.hstack([
-        mo.ui.number(value=1619, label="Dataflow ID", step=1),
-        mo.ui.text(value="IE", label="Country code (ISO 3166-1 α-2)"),
-    ])
-    return
-
-
-@app.cell
-def _(mo):
-    _cfg = mo.hstack([
-        mo.ui.number(value=1619, label="Dataflow ID", step=1),
-        mo.ui.text(value="IE", label="Country code"),
-    ])
-    return
-
-
-@app.cell
-def _(mo):
     dataflow_id_cfg = mo.ui.number(value=1619, label="Dataflow ID", step=1)
     country_code_cfg = mo.ui.text(value="IE", label="Country code (ISO 3166-1 α-2)")
     mo.hstack([dataflow_id_cfg, country_code_cfg])
     return country_code_cfg, dataflow_id_cfg
+
+
+@app.cell
+def _(dataflow_id_cfg, mo):
+    _did = int(dataflow_id_cfg.value)
+    key_input_02 = mo.ui.text(
+        placeholder="paste your API key here",
+        kind="password",
+        label="API key",
+        full_width=True,
+    )
+    save_btn_02 = mo.ui.run_button(label="Save to keychain")
+    mo.accordion({
+        f"🔑 Save API key for dataflow {_did}": mo.vstack([
+            mo.md("Saves the key to your system keychain — only needed once per dataflow."),
+            key_input_02,
+            save_btn_02,
+        ])
+    })
+    return key_input_02, save_btn_02
+
+
+@app.cell
+def _(dataflow_id_cfg, key_input_02, mo, save_btn_02):
+    import reportnet as _rn02
+    mo.stop(not save_btn_02.value or not key_input_02.value)
+    _rn02.save_key(int(dataflow_id_cfg.value), key_input_02.value)
+    mo.callout(mo.md("API key saved — re-run the cell above to connect."), kind="success")
 
 
 @app.cell
@@ -94,8 +100,8 @@ def _(country_code_cfg, dataflow_id_cfg, mo):
         connect_ok = False
         mo.callout(
             mo.md(
-                f"No API key for dataflow {DATAFLOW_ID}.  \n"
-                f"Run: `reportnet.save_key({DATAFLOW_ID}, 'your-key')`"
+                f"No API key found for dataflow {DATAFLOW_ID}.  \n"
+                f"Expand *Save API key* above to store your key."
             ),
             kind="danger",
         )
