@@ -125,3 +125,54 @@ def test_import_dataframe_respects_custom_delimiter(mock_router, client):
 
     body = captured[0].decode()
     assert "col1,col2" in body
+
+
+# ── Spatial (geopandas) ────────────────────────────────────────────────────────
+
+def test_to_geodataframe_from_polars():
+    """to_geodataframe() converts a polars frame with WKT column to GeoDataFrame."""
+    gpd = pytest.importorskip("geopandas")
+    pl  = pytest.importorskip("polars")
+    import reportnet
+
+    df = pl.DataFrame({
+        "id":       ["PA1", "PA2"],
+        "geometry_polygon": [
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            "MULTIPOLYGON (((2 2, 3 2, 3 3, 2 3, 2 2)))",
+        ],
+        "name": ["Area A", "Area B"],
+    })
+    gdf = reportnet.to_geodataframe(df, "geometry_polygon")
+    assert isinstance(gdf, gpd.GeoDataFrame)
+    assert len(gdf) == 2
+    assert gdf.crs.to_epsg() == 4326
+    assert gdf.geometry.geom_type.tolist() == ["MultiPolygon", "MultiPolygon"]
+
+
+def test_to_file_tuple_from_geodataframe():
+    """import_file() accepts a GeoDataFrame — geometry serialised as WKT."""
+    gpd    = pytest.importorskip("geopandas")
+    pytest.importorskip("shapely")
+    from shapely.geometry import MultiPolygon, Polygon
+
+    from reportnet._util import to_file_tuple
+
+    gdf = gpd.GeoDataFrame(
+        {"id": ["PA1"], "name": ["Area A"]},
+        geometry=[MultiPolygon([Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])])],
+        crs="EPSG:4326",
+    )
+    fname, data = to_file_tuple(gdf, None)
+    text = data.decode()
+    assert "geometry" in text
+    assert "MULTIPOLYGON" in text.upper()
+    assert "PA1" in text
+
+
+def test_field_type_multipolygon():
+    """MULTIPOLYGON and MULTILINESTRING are recognised FieldType values."""
+    from reportnet import FieldType
+    assert FieldType("MULTIPOLYGON") == FieldType.MULTIPOLYGON
+    assert FieldType("MULTILINESTRING") == FieldType.MULTILINESTRING
+    assert FieldType("MULTIPOINT") == FieldType.MULTIPOINT

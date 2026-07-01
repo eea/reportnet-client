@@ -345,7 +345,13 @@ def to_geodataframe(
 
     try:
         import narwhals as nw
-        pdf = nw.from_native(frame, eager_only=True).to_pandas()  # type: ignore[call-overload]
+        import pandas as _pd
+        nwf = nw.from_native(frame, eager_only=True)  # type: ignore[call-overload]
+        try:
+            pdf = nwf.to_pandas()
+        except Exception:
+            # polars → pandas without pyarrow: go via Python lists
+            pdf = _pd.DataFrame({col: nwf[col].to_list() for col in nwf.columns})
     except Exception:
         pdf = frame
 
