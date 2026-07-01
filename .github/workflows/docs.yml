@@ -1,8 +1,6 @@
 name: Deploy docs
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -19,7 +17,17 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --group explore
+
+      - name: Export notebooks to HTML
+        run: |
+          mkdir -p docs/notebooks
+          uv run marimo export html notebooks/01_explore_dataflow.py \
+            --no-include-code -f -o docs/notebooks/01_explore_dataflow.html
+          uv run marimo export html notebooks/02_import_export_pipeline.py \
+            --no-include-code -f -o docs/notebooks/02_import_export_pipeline.html
+          uv run marimo export html notebooks/03_spatial_geodataframe.py \
+            --no-include-code -f -o docs/notebooks/03_spatial_geodataframe.html
 
       - name: Build and deploy to GitHub Pages
         run: uv run mkdocs gh-deploy --force

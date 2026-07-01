@@ -42,6 +42,7 @@ plugins:
 nav:
   - Home: index.md
   - Concepts: concepts.md
+  - Notebooks: notebooks.md
   - Guides:
     - Import data: guides/import.md
     - Export data: guides/export.md

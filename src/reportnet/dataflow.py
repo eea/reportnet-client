@@ -55,10 +55,12 @@ class DataflowClient:
         dataflow_id: int,
         *,
         provider_id: int | None = None,
+        country_code: str | None = None,
     ) -> None:
         self._client = client
         self._dataflow_id = dataflow_id
         self._provider_id = provider_id
+        self._country_code = country_code
 
     def _pid(self, override: int | None) -> int | None:
         """Return override if given, else fall back to the stored provider_id."""
@@ -114,7 +116,11 @@ class DataflowClient:
                 f"Multiple reporters for {code!r} (provider_ids: {ids}). "
                 f"Use get_reporters() to pick one, then for_provider()."
             )
-        return self.for_provider(matches[0].provider_id)
+        return DataflowClient(
+            self._client, self._dataflow_id,
+            provider_id=matches[0].provider_id,
+            country_code=code,
+        )
 
     # ── Dataflow metadata ─────────────────────────────────────────────────────
 
@@ -297,14 +303,40 @@ class DataflowClient:
         *,
         dataset_id: int,
         provider_id: int | None = None,
+        data_provider_codes: str | None = None,
         table_schema_id: str | None = None,
         include_attachments: bool = False,
-        version: int = 4,
+        version: int | None = None,
     ) -> JobHandle:
+        """Export a dataset via the ETL endpoint.
+
+        *version* selects the API version:
+
+        - ``4`` (default for BigData/DLT2 dataflows) — asynchronous, returns a ZIP of CSVs
+        - ``3`` (default for Citus dataflows) — asynchronous, returns JSON;
+          requires a country code (``dataProviderCodes``), injected automatically
+          when the client was created via :meth:`find_reporter`.
+
+        When *version* is ``None`` (the default), the correct version is chosen
+        automatically by calling :meth:`is_big_dataflow`.
+
+        Args:
+            data_provider_codes: ISO 3166-1 alpha-2 country code passed as
+                ``dataProviderCodes`` to the v3 endpoint (e.g. ``"FR"``).
+                Inferred automatically when the client was obtained via
+                :meth:`find_reporter`.
+        """
+        if version is None:
+            version = 4 if self.is_big_dataflow() else 3
+        # v3 uses dataProviderCodes (country code) instead of providerId.
+        # Sending both causes a 403, so only pass providerId for v4+.
+        dpc = data_provider_codes or (self._country_code if version == 3 else None)
+        pid = None if version == 3 else self._pid(provider_id)
         return self._client.etl_export(
             dataset_id=dataset_id,
             dataflow_id=self._dataflow_id,
-            provider_id=self._pid(provider_id),
+            provider_id=pid,
+            data_provider_codes=dpc,
             table_schema_id=table_schema_id,
             include_attachments=include_attachments,
             version=version,
@@ -572,12 +604,21 @@ class DataflowClient:
 
         codelists: dict[str, list[str]] | None = None
         if _ref_id is not None:
-            codelists = self.get_codelists(
-                dataset_id=dataset_id,
-                ref_dataset_id=_ref_id,
-                poll_interval=poll_interval,
-                timeout=timeout,
-            )
+            from .exceptions import ReportnetError
+            try:
+                codelists = self.get_codelists(
+                    dataset_id=dataset_id,
+                    ref_dataset_id=_ref_id,
+                    poll_interval=poll_interval,
+                    timeout=timeout,
+                )
+            except ReportnetError:
+                # Codelist retrieval can fail for several reasons: the reporter
+                # key may be forbidden from exporting the reference dataset
+                # (403), the export job may fail server-side, or the job may
+                # time out.  Fall back to plain-string LINK columns rather than
+                # failing — numeric, date, and boolean columns are still typed.
+                pass
 
         return schema.to_frames(codelists=codelists)
 
@@ -636,3 +677,113 @@ class DataflowClient:
             dataflow_id=self._dataflow_id,
             updatable=updatable,
         )
+
+    # ── Visualisation ─────────────────────────────────────────────────────────
+
+    def to_mermaid(self, *, include_test: bool = False) -> str:
+        """Return a Mermaid diagram string describing this dataflow's structure.
+
+        Renders natively in marimo without any CLI tools::
+
+            mo.mermaid(flow.to_mermaid())
+
+        One compact node per reporter country, coloured by their worst
+        submission status across all tables (green = all FINAL, yellow =
+        correction requested, grey = pending).  Reference and test datasets
+        are shown as separate nodes connected to the dataflow.
+
+        Args:
+            include_test: When True, also show test datasets (one extra API
+                call).
+
+        Returns:
+            A Mermaid ``graph LR`` diagram string.
+        """
+        from collections import defaultdict
+
+        from .providers import by_id as provider_by_id
+
+        info = self.get_dataflow()
+        ref_ds = self.get_reference_datasets()
+        reporting_ds = self.get_reporting_datasets()
+        test_ds = self.get_test_datasets() if include_test else []
+
+        def _esc(s: str) -> str:
+            return (
+                s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("#", "#35;")
+            )
+
+        # Worst-status priority order (higher index = worse)
+        _STATUS_RANK = {"FINAL": 0, "TECHNICALLY_ACCEPTED": 1, "PENDING": 2,
+                        "CORRECTION_REQUESTED": 3}
+        _STATUS_COLOR = {
+            "FINAL":                 ("#A8D5A2", "#1a3a1a"),
+            "TECHNICALLY_ACCEPTED":  ("#C8E6C9", "#1a3a1a"),
+            "PENDING":               ("#D0D0D0", "#333333"),
+            "CORRECTION_REQUESTED":  ("#FFD580", "#333333"),
+        }
+
+        lines: list[str] = ["graph LR"]
+
+        # ── Dataflow ──────────────────────────────────────────────────────
+        df_label = (
+            f"{_esc(info.name)}<br/>"
+            f"<small>id={info.id} · {_esc(info.type)} · {_esc(info.status)}</small>"
+        )
+        lines.append(f'    df[["{df_label}"]]')
+        lines.append("    style df fill:#2C5F8A,color:#fff,stroke:#1a3f63")
+        lines.append("")
+
+        # ── Reference datasets ────────────────────────────────────────────
+        for rd in ref_ds:
+            nid = f"ref_{rd.id}"
+            lines.append(f'    {nid}["{_esc(rd.name)}"]')
+            lines.append(f"    style {nid} fill:#4CAF50,color:#fff,stroke:#388E3C")
+            lines.append(f"    df -->|ref| {nid}")
+        if ref_ds:
+            lines.append("")
+
+        # ── Test datasets ─────────────────────────────────────────────────
+        for td in test_ds:
+            nid = f"test_{td.id}"
+            lines.append(f'    {nid}["{_esc(td.name)}"]')
+            lines.append(f"    style {nid} fill:#FF9800,color:#fff,stroke:#E65100")
+            lines.append(f"    df -.->|test| {nid}")
+        if test_ds:
+            lines.append("")
+
+        # ── One node per reporter — coloured by worst status ──────────────
+        by_provider: dict[int, list[ReportingDataset]] = defaultdict(list)
+        for ds in reporting_ds:
+            by_provider[ds.provider_id].append(ds)
+
+        for provider_id, datasets in sorted(by_provider.items()):
+            provider = provider_by_id(provider_id)
+            if provider is not None:
+                label = f"{provider.country_code} — {provider.country_name}"
+            else:
+                label = datasets[0].name or str(provider_id)
+
+            worst = max(datasets, key=lambda d: _STATUS_RANK.get(d.status, 2)).status
+            fill, text = _STATUS_COLOR.get(worst, ("#E8E8E8", "#333333"))
+
+            n_tables = len(datasets)
+            n_final = sum(1 for d in datasets if d.status == "FINAL")
+            ds_lines = "<br/>".join(
+                f"<small>{_esc(ds.table_name)}: {ds.id}</small>"
+                for ds in sorted(datasets, key=lambda d: d.table_name)
+            )
+            full_label = (
+                f"{_esc(label)}<br/>{ds_lines}<br/><small>{n_final}/{n_tables} FINAL</small>"
+            )
+
+            nid = f"p_{provider_id}"
+            lines.append(f'    {nid}["{full_label}"]')
+            lines.append(f"    style {nid} fill:{fill},color:{text},stroke:#999")
+            lines.append(f"    df --> {nid}")
+
+        return "\n".join(lines)

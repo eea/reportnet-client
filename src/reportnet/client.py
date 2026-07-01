@@ -19,11 +19,15 @@ if TYPE_CHECKING:
     from .dataflow import DataflowClient
 
 
+PRODUCTION_URL = "https://api.reportnet.europa.eu"
+SANDBOX_URL = "https://sandbox.reportnet.europa.eu"
+
+
 class ReportnetClient:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.reportnet.europa.eu",
+        base_url: str = PRODUCTION_URL,
         timeout: float = 30.0,
     ) -> None:
         self._http = HttpSession(api_key=api_key, base_url=base_url, timeout=timeout)
@@ -32,12 +36,33 @@ class ReportnetClient:
     def from_keyring(
         cls,
         dataflow_id: int | str,
-        base_url: str = "https://api.reportnet.europa.eu",
+        base_url: str | None = None,
+        *,
+        sandbox: bool = False,
         timeout: float = 30.0,
     ) -> "ReportnetClient":
-        """Create a client using the API key stored in the system keychain."""
+        """Create a client using the API key stored in the system keychain.
+
+        Args:
+            dataflow_id: The dataflow ID the key was stored under.
+            base_url: API base URL.  Defaults to :data:`SANDBOX_URL` when
+                ``sandbox=True``, otherwise :data:`PRODUCTION_URL`.
+            sandbox: If ``True``, use the sandbox environment and look up the
+                sandbox key (stored separately from the production key).
+            timeout: HTTP request timeout in seconds.
+
+        Examples::
+
+            # Production (default)
+            client = ReportnetClient.from_keyring(1619)
+
+            # Sandbox
+            client = ReportnetClient.from_keyring(1619, sandbox=True)
+        """
         from .keychain import get_key
-        return cls(api_key=get_key(dataflow_id), base_url=base_url, timeout=timeout)
+        if base_url is None:
+            base_url = SANDBOX_URL if sandbox else PRODUCTION_URL
+        return cls(api_key=get_key(dataflow_id, sandbox=sandbox), base_url=base_url, timeout=timeout)
 
     def for_dataflow(
         self,
@@ -111,9 +136,18 @@ class ReportnetClient:
         return [TestDataset.from_dict(d) for d in raw]
 
     def is_big_dataflow(self, *, dataflow_id: int) -> bool:
-        """GET /dataflow/private/v1/{dataflowId}/isBigDataflow — BigData (DLT2) flag."""
-        response = self._http.get(f"/dataflow/private/v1/{dataflow_id}/isBigDataflow")
-        return bool(response.json())
+        """GET /dataflow/private/v1/{dataflowId}/isBigDataflow — BigData (DLT2) flag.
+
+        Returns False for Citus dataflows (endpoint returns 404 for those).
+        """
+        from .exceptions import APIError
+        try:
+            response = self._http.get(f"/dataflow/private/v1/{dataflow_id}/isBigDataflow")
+            return bool(response.json())
+        except APIError as exc:
+            if exc.status_code == 404:
+                return False
+            raise
 
     def close(self) -> None:
         self._http.close()
@@ -184,17 +218,24 @@ class ReportnetClient:
         dataset_id: int,
         dataflow_id: int,
         provider_id: int | None = None,
+        data_provider_codes: str | None = None,
         table_schema_id: str | None = None,
         include_attachments: bool = False,
         version: int = 4,
     ) -> JobHandle:
-        """GET /dataset/v{version}/etlExport/{datasetId} — async, result is a ZIP of CSVs."""
+        """GET /dataset/v{version}/etlExport/{datasetId} — async export.
+
+        v4 (BigData/DLT2): result is a ZIP of CSVs.
+        v3 (Citus): result is JSON; requires ``data_provider_codes`` (ISO country code).
+        """
         params: dict[str, object] = {
             "dataflowId": dataflow_id,
             "includeAttachments": str(include_attachments).lower(),
         }
         if provider_id is not None:
             params["providerId"] = provider_id
+        if data_provider_codes is not None:
+            params["dataProviderCodes"] = data_provider_codes
         if table_schema_id is not None:
             params["tableSchemaId"] = table_schema_id
 

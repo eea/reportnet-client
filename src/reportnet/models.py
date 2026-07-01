@@ -174,6 +174,9 @@ class FieldType(str, Enum):
     POINT = "POINT"
     LINESTRING = "LINESTRING"
     POLYGON = "POLYGON"
+    MULTIPOINT = "MULTIPOINT"
+    MULTILINESTRING = "MULTILINESTRING"
+    MULTIPOLYGON = "MULTIPOLYGON"
 
     @classmethod
     def _missing_(cls, value: object) -> "FieldType":

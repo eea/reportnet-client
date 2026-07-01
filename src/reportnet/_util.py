@@ -39,6 +39,12 @@ def to_file_tuple(
     if type(file).__name__ == "DuckDBPyRelation":
         return to_file_tuple(getattr(file, "pl")(), filename, delimiter=delimiter)
 
+    # GeoDataFrame — geometry column serialised as WKT by geopandas .to_csv()
+    if type(file).__name__ == "GeoDataFrame":
+        buf = io.BytesIO()
+        getattr(file, "to_csv")(buf, index=False, sep=delimiter)
+        return filename or "upload.csv", buf.getvalue()
+
     # DataFrame via narwhals (supports polars, pandas, modin, …)
     try:
         import narwhals as nw
@@ -65,7 +71,13 @@ def to_file_tuple(
 
 
 def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
-    """Unzip a ZIP of CSVs and return a dict of DataFrames keyed by table name.
+    """Unzip a ZIP export and return a dict of DataFrames keyed by table name.
+
+    Handles two formats:
+
+    - **ZIP of CSVs** (v4 / BigData exports): one ``.csv`` file per table.
+    - **ZIP of JSON** (v3 / Citus exports): a single ``.json`` file containing
+      all tables in the Reportnet ETL JSON envelope.
 
     Requires polars or pandas (``pip install reportnet[dataframe]``).
     Tries polars first; falls back to pandas if polars is not installed.
@@ -73,15 +85,21 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
     try:
         import polars as pl
 
-        def _read(data: bytes) -> Any:
+        def _read_csv(data: bytes) -> Any:
             return pl.read_csv(io.BytesIO(data))
+
+        def _records_to_frame(rows: list[dict[str, Any]]) -> Any:
+            return pl.DataFrame(rows)
 
     except ImportError:
         try:
             import pandas as pd
 
-            def _read(data: bytes) -> Any:
+            def _read_csv(data: bytes) -> Any:
                 return pd.read_csv(io.BytesIO(data))
+
+            def _records_to_frame(rows: list[dict[str, Any]]) -> Any:
+                return pd.DataFrame(rows)
 
         except ImportError:
             raise ImportError(
@@ -90,17 +108,48 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
             ) from None
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        return {
-            _table_name(name): _read(zf.read(name))
-            for name in zf.namelist()
-            if name.lower().endswith(".csv")
-        }
+        names = zf.namelist()
+        csv_names = [n for n in names if n.lower().endswith(".csv")]
+        json_names = [n for n in names if n.lower().endswith(".json")]
+
+        if csv_names:
+            return {_table_name(n): _read_csv(zf.read(n)) for n in csv_names}
+
+        if json_names:
+            return _etl_json_to_frames(zf.read(json_names[0]), _records_to_frame)
+
+    return {}
 
 
 def _table_name(path: str) -> str:
     """'some/path/TableName.csv' → 'TableName'"""
     leaf = path.rsplit("/", 1)[-1]
     return leaf[:-4] if leaf.lower().endswith(".csv") else leaf
+
+
+def _etl_json_to_frames(
+    json_bytes: bytes,
+    records_to_frame: Any,
+) -> dict[str, Any]:
+    """Parse a v3 ETL JSON export into DataFrames.
+
+    The JSON envelope is::
+
+        {"tables": [{"tableName": "...", "totalRecords": N,
+                     "records": [{"fields": [{"fieldName": "...", "value": "..."}]}]}]}
+    """
+    import json
+
+    data = json.loads(json_bytes)
+    result: dict[str, Any] = {}
+    for table in data.get("tables", []):
+        name: str = table["tableName"]
+        rows = [
+            {f["fieldName"]: f["value"] for f in rec.get("fields", [])}
+            for rec in table.get("records", [])
+        ]
+        result[name] = records_to_frame(rows) if rows else records_to_frame([{}])
+    return result
 
 
 # ── Schema → DataFrame ────────────────────────────────────────────────────────
@@ -295,3 +344,81 @@ def build_codelists(
             codelists[f.name] = [str(v) for v in values]
 
     return codelists
+
+
+def to_geodataframe(
+    frame: object,
+    geometry_col: str,
+    *,
+    crs: str = "EPSG:4326",
+) -> Any:
+    """Convert a DataFrame with a WKT geometry column to a ``geopandas.GeoDataFrame``.
+
+    Geometry fields (``POINT``, ``POLYGON``, ``MULTIPOLYGON``, etc.) are stored
+    as WKT strings in Reportnet CSV exports.  This helper parses them into
+    proper shapely geometry objects and returns a ``GeoDataFrame`` ready for
+    spatial analysis or visualisation.
+
+    Requires ``pip install reportnet-client[spatial]``.
+
+    Args:
+        frame: A polars or pandas DataFrame containing a WKT geometry column,
+            typically from :meth:`~reportnet.JobHandle.to_frames`.
+        geometry_col: Name of the column holding WKT geometry strings
+            (e.g. ``"geometry_polygon"`` or ``"geometry_line"``).
+        crs: Coordinate reference system for the output GeoDataFrame.
+            Reportnet geometries are in WGS 84 (``"EPSG:4326"``).
+
+    Returns:
+        A ``geopandas.GeoDataFrame`` with the named column replaced by a
+        proper geometry series.
+
+    Example::
+
+        frames = flow.etl_export(dataset_id=89259).to_frames()
+        gdf = reportnet.to_geodataframe(frames["ProtectedArea"], "geometry_polygon")
+        gdf.plot()
+    """
+    try:
+        import geopandas as gpd  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError(
+            "geopandas is required; install it with: pip install reportnet-client[spatial]"
+        ) from None
+
+    try:
+        import narwhals as nw
+        import pandas as _pd
+        nwf = nw.from_native(frame, eager_only=True)  # type: ignore[call-overload]
+        try:
+            pdf = nwf.to_pandas()
+        except Exception:
+            # polars → pandas without pyarrow: go via Python lists
+            pdf = _pd.DataFrame({col: nwf[col].to_list() for col in nwf.columns})
+    except Exception:
+        pdf = frame
+
+    # Detect geometry format: GeoJSON Feature strings start with '{', WKT does not.
+    col = pdf[geometry_col]
+    first_valid = next((v for v in col if v and isinstance(v, str)), None)
+    if first_valid and first_valid.lstrip().startswith("{"):
+        import json as _json
+        from shapely.geometry import shape as _shape
+
+        def _parse(val: Any) -> Any:
+            if not val or not isinstance(val, str):
+                return None
+            try:
+                obj = _json.loads(val)
+                return _shape(obj.get("geometry") or obj)
+            except Exception:
+                return None
+
+        geom_series = gpd.GeoSeries([_parse(v) for v in col], crs=crs)
+    else:
+        geom_series = gpd.GeoSeries.from_wkt(col, crs=crs)
+
+    # Replace the raw string column with parsed geometries (keeps column count the same).
+    pdf = pdf.copy()
+    pdf[geometry_col] = geom_series
+    return gpd.GeoDataFrame(pdf, geometry=geometry_col, crs=crs)

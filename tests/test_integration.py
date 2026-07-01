@@ -219,6 +219,28 @@ def test_validate_frame_with_real_schema(df_1619):
     assert errors == [], f"Empty template should have no errors: {errors}"
 
 
+# ── get_template ──────────────────────────────────────────────────────────────
+
+@pytest.mark.integration
+@pytest.mark.parametrize("dataset_id,label", [
+    (DATASET_ID, "reporting (93953)"),
+    (93652,      "data collection (93652)"),
+    (93951,      "data schema (93951)"),
+])
+def test_get_template(df_1619, dataset_id, label):
+    """get_template() should return a dict of empty typed DataFrames."""
+    pytest.importorskip("polars")
+    import polars as pl
+
+    templates = df_1619.get_template(dataset_id=dataset_id, poll_interval=10.0, timeout=300.0)
+    assert isinstance(templates, dict), f"Expected dict, got {type(templates)}"
+    assert len(templates) > 0, "Expected at least one table"
+    for table_name, frame in templates.items():
+        assert isinstance(frame, pl.DataFrame), f"{table_name}: expected pl.DataFrame"
+        assert frame.shape[0] == 0, f"{table_name}: expected empty frame"
+        print(f"\n  [{label}] {table_name}: {frame.schema}")
+
+
 # ── Export ────────────────────────────────────────────────────────────────────
 
 @pytest.mark.integration
@@ -372,11 +394,16 @@ def test_validation_job_and_results(df_1619):
     except DatasetLockedError as e:
         pytest.skip(f"Dataset locked — another job is already running: {e}")
 
-    handle.wait(
-        poll_interval=10.0,
-        timeout=600.0,
-        on_status=lambda s: print(f"  validation job status: {s}"),
-    )
+    from reportnet.exceptions import JobTimeoutError
+
+    try:
+        handle.wait(
+            poll_interval=10.0,
+            timeout=600.0,
+            on_status=lambda s: print(f"  validation job status: {s}"),
+        )
+    except JobTimeoutError:
+        pytest.skip("Validation job still running after 600 s — server-side slowness")
     results = df_1619.list_group_validations_dl(dataset_id=DATASET_ID)
     assert isinstance(results, dict)
 
@@ -417,16 +444,21 @@ def _generate_csv() -> bytes:
 @pytest.mark.integration
 def test_import_file_csv(df_1619):
     """Upload generated rows as CSV (append, does not replace existing data)."""
+    from reportnet import DatasetLockedError
+
     csv_bytes = _generate_csv()
     print(f"\n  uploading:\n{csv_bytes.decode()}")
 
-    handle = df_1619.import_file(
-        dataset_id=DATASET_ID,
-        file=csv_bytes,
-        filename="test_upload.csv",
-        table_schema_id=TABLE_SCHEMA_ID,
-        replace=False,
-    )
+    try:
+            handle = df_1619.import_file(
+            dataset_id=DATASET_ID,
+            file=csv_bytes,
+            filename="test_upload.csv",
+            table_schema_id=TABLE_SCHEMA_ID,
+            replace=False,
+        )
+    except DatasetLockedError as e:
+        pytest.skip(f"Dataset locked — another job is still running: {e}")
     handle.wait(
         poll_interval=10.0,
         timeout=600.0,
@@ -444,6 +476,8 @@ def test_import_file_csv(df_1619):
 @pytest.mark.integration
 def test_import_file_dataframe(df_1619):
     """Upload a polars DataFrame — verifies the delimiter fix."""
+    from reportnet import DatasetLockedError
+
     pl = pytest.importorskip("polars")
 
     df = pl.DataFrame({
@@ -458,13 +492,16 @@ def test_import_file_dataframe(df_1619):
     })
     print(f"\n  uploading DataFrame:\n{df}")
 
-    handle = df_1619.import_file(
-        dataset_id=DATASET_ID,
-        file=df,
-        filename="test_df_upload.csv",
-        table_schema_id=TABLE_SCHEMA_ID,
-        replace=False,
-    )
+    try:
+        handle = df_1619.import_file(
+            dataset_id=DATASET_ID,
+            file=df,
+            filename="test_df_upload.csv",
+            table_schema_id=TABLE_SCHEMA_ID,
+            replace=False,
+        )
+    except DatasetLockedError as e:
+        pytest.skip(f"Dataset locked — another job is still running: {e}")
     handle.wait(
         poll_interval=10.0,
         timeout=600.0,
@@ -482,6 +519,8 @@ def test_import_file_dataframe(df_1619):
 @pytest.mark.integration
 def test_import_frames_dict(df_1619):
     """import_frames() uploads a dict of DataFrames, one per table."""
+    from reportnet import DatasetLockedError
+
     pl = pytest.importorskip("polars")
 
     frames = {
@@ -498,13 +537,16 @@ def test_import_frames_dict(df_1619):
     }
     print(f"\n  import_frames: {list(frames)} → {list(frames.values())[0].shape}")
 
-    df_1619.import_frames(
-        dataset_id=DATASET_ID,
-        frames=frames,
-        replace=False,
-        poll_interval=10.0,
-        timeout=600.0,
-    )
+    try:
+        df_1619.import_frames(
+            dataset_id=DATASET_ID,
+            frames=frames,
+            replace=False,
+            poll_interval=10.0,
+            timeout=600.0,
+        )
+    except DatasetLockedError as e:
+        pytest.skip(f"Dataset locked — another job is still running: {e}")
 
     exported = df_1619.etl_export(dataset_id=DATASET_ID).to_frames(
         poll_interval=10.0,
@@ -512,3 +554,21 @@ def test_import_frames_dict(df_1619):
     )
     assert "Table1a" in exported
     print(f"  Table1a after import_frames: {exported['Table1a'].shape[0]} rows")
+
+
+# ── Visualisation ──────────────────────────────────────────────────────────────
+
+@pytest.mark.integration
+def test_to_mermaid(df_1619):
+    mmd = df_1619.to_mermaid()
+    assert mmd.startswith("graph LR")
+    assert 'df[["' in mmd                  # dataflow node
+    assert "subgraph cluster_" in mmd      # at least one reporter cluster
+    print(f"\n  Mermaid length: {len(mmd)} chars")
+
+
+@pytest.mark.integration
+def test_to_mermaid_include_test(df_1619):
+    mmd = df_1619.to_mermaid(include_test=True)
+    assert "graph LR" in mmd
+    print(f"\n  Mermaid with test datasets: {len(mmd)} chars")

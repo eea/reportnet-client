@@ -1,0 +1,74 @@
+name: Notebook preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group explore
+
+      - name: Export notebooks to HTML
+        run: |
+          mkdir -p _preview
+          for nb in notebooks/*.py; do
+            name=$(basename "$nb" .py)
+            uv run marimo export html "$nb" --no-include-code -f -o "_preview/${name}.html"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: notebooks-pr-${{ github.event.number }}
+          path: _preview/
+          retention-days: 14
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              '### 📓 Notebook preview',
+              '',
+              `Download the **[notebook-preview artifact](${runUrl})** from this Actions run, unzip it, and open any `.html` file in your browser.`,
+              '',
+              '| File | Contents |',
+              '|---|---|',
+              '| `01_explore_dataflow.html` | Browse reporters, schemas, dataflow structure |',
+              '| `02_import_export_pipeline.html` | End-to-end import → validate → export |',
+              '| `03_spatial_geodataframe.html` | Spatial data → GeoDataFrame |',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes('Notebook preview'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

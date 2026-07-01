@@ -50,10 +50,34 @@ def test_import_file_overrides_provider_id(mock_router, df_client):
 
 
 def test_etl_export_prefills_dataflow_id(mock_router, df_client):
+    mock_router.get("/dataflow/private/v1/5/isBigDataflow").mock(
+        return_value=httpx.Response(200, json=True)
+    )
     route = mock_router.get("/dataset/v4/etlExport/10").mock(
         return_value=httpx.Response(200, json={"pollingUrl": POLLING_URL, "status": "QUEUED"})
     )
     handle = df_client.etl_export(dataset_id=10)
+    assert isinstance(handle, JobHandle)
+    assert "dataflowId=5" in str(route.calls[0].request.url)
+
+
+def test_etl_export_uses_v3_for_citus(mock_router, df_client):
+    mock_router.get("/dataflow/private/v1/5/isBigDataflow").mock(
+        return_value=httpx.Response(404, json={})
+    )
+    route = mock_router.get("/dataset/v3/etlExport/10").mock(
+        return_value=httpx.Response(200, json={"pollingUrl": POLLING_URL, "status": "QUEUED"})
+    )
+    handle = df_client.etl_export(dataset_id=10)
+    assert isinstance(handle, JobHandle)
+    assert "dataflowId=5" in str(route.calls[0].request.url)
+
+
+def test_etl_export_explicit_version_skips_detection(mock_router, df_client):
+    route = mock_router.get("/dataset/v4/etlExport/10").mock(
+        return_value=httpx.Response(200, json={"pollingUrl": POLLING_URL, "status": "QUEUED"})
+    )
+    handle = df_client.etl_export(dataset_id=10, version=4)
     assert isinstance(handle, JobHandle)
     assert "dataflowId=5" in str(route.calls[0].request.url)
 
