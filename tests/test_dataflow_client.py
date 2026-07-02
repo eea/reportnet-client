@@ -26,6 +26,9 @@ def test_for_dataflow_stores_provider_id(client):
 
 
 def test_import_file_prefills_dataflow_id(mock_router, df_client):
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": False})
+    )
     route = mock_router.post("/dataset/v2/importFileData/10").mock(
         return_value=httpx.Response(200, json=JOB_RESPONSE)
     )
@@ -34,6 +37,10 @@ def test_import_file_prefills_dataflow_id(mock_router, df_client):
 
 
 def test_import_file_uses_default_provider_id(mock_router, df_client):
+    """Citus (non-BigData) dataflows still auto-fill the stored provider_id."""
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": False})
+    )
     route = mock_router.post("/dataset/v2/importFileData/10").mock(
         return_value=httpx.Response(200, json=JOB_RESPONSE)
     )
@@ -42,6 +49,30 @@ def test_import_file_uses_default_provider_id(mock_router, df_client):
 
 
 def test_import_file_overrides_provider_id(mock_router, df_client):
+    route = mock_router.post("/dataset/v2/importFileData/10").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    df_client.import_file(dataset_id=10, file=b"data", provider_id=99)
+    assert "providerId=99" in str(route.calls[0].request.url)
+
+
+def test_import_file_bigdata_does_not_auto_fill_provider_id(mock_router, df_client):
+    """BigData rejects providerId with a 403, so the stored default must not
+    be auto-injected — only an explicit override is forwarded."""
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True})
+    )
+    route = mock_router.post("/dataset/v2/importFileData/10").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    df_client.import_file(dataset_id=10, file=b"data")
+    assert "providerId" not in str(route.calls[0].request.url)
+
+
+def test_import_file_bigdata_forwards_explicit_provider_id_override(mock_router, df_client):
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True})
+    )
     route = mock_router.post("/dataset/v2/importFileData/10").mock(
         return_value=httpx.Response(200, json=JOB_RESPONSE)
     )

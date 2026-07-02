@@ -340,10 +340,11 @@ def test_export_dataset_file_dl(df_1619):
     assert len(zip_bytes) > 0
 
 
-# ── BigData dataflow (2003) — reporter-scoped v4 export ─────────────────────────
-# Regression coverage for a bug where v4/v5 etlExport 403'd whenever providerId
-# was included, which DataflowClient auto-injected for any reporter-scoped
-# client (for_provider / find_reporter). See dataflow.py etl_export().
+# ── BigData dataflow (2003) — reporter-scoped v4 export / import ────────────────
+# Regression coverage for a bug where v4/v5 etlExport and importFileData both
+# 403'd whenever providerId was included, which DataflowClient auto-injected
+# for any reporter-scoped client (for_provider / find_reporter). See
+# dataflow.py etl_export() / import_file().
 
 DATAFLOW_ID_BIGDATA = 2003
 
@@ -384,6 +385,43 @@ def test_etl_export_v4_scoped_reporter_no_403(df_2003):
     handle = scoped.etl_export(dataset_id=datasets[0].id)
     status = handle.status()
     print(f"\n  provider_id={pid} dataset={datasets[0].id} status={status}")
+
+
+@pytest.mark.integration
+def test_import_file_v2_scoped_reporter_no_403(df_2003):
+    """import_file() must not auto-inject providerId for a reporter-scoped
+    DataflowClient on a BigData dataflow — same root cause as the etlExport
+    403 above. Targets a Test Dataset (not the reporting dataset) since the
+    reporting dataset in this dataflow is PENDING and rejects all imports
+    regardless of providerId.
+
+    Only asserts the request is accepted (no AuthError/APIError) — the job
+    itself may still end CANCELED with "Import is not allowed for this
+    dataset" while dataflow 2003 remains in DRAFT status; that's a dataflow
+    lifecycle gate on the server, not something this client can control.
+    """
+    test_datasets = df_2003.get_test_datasets()
+    descriptive = [t for t in test_datasets if "Descriptive" in t.name]
+    assert descriptive, f"no descriptive test dataset in {test_datasets}"
+
+    reporters = df_2003.get_reporters()
+    assert reporters, "no reporters in dataflow"
+    scoped = df_2003.for_provider(reporters[0].provider_id)
+
+    csv_body = (
+        "repCode|conName|conInstitution|conStreet|conZIP|conCity|"
+        "conPhone|conEmail|conRemarks\n"
+        "TEST|Integration Test|reportnet-client|||test-phone|"
+        "test@example.com|synthetic regression-test row\n"
+    ).encode()
+    handle = scoped.import_file(
+        dataset_id=descriptive[0].id,
+        file=csv_body,
+        filename="contacts.csv",
+        table_schema_id=descriptive[0].schema_id,
+    )
+    status = handle.status()
+    print(f"\n  dataset={descriptive[0].id} status={status}")
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
