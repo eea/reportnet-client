@@ -229,7 +229,10 @@ class ReportnetClient:
     ) -> JobHandle:
         """GET /dataset/v{version}/etlExport/{datasetId} — async export.
 
-        v4 (BigData/DLT2): result is a ZIP of CSVs.
+        v4 (BigData/DLT2, recommended): result is a ZIP of CSVs.
+        v5 (analytics, opt-in): result is a ZIP of Parquet files — same shape
+        as v4, smaller and faster to load; never selected automatically, pass
+        ``version=5`` explicitly.
         v3 (Citus): result is JSON; requires ``data_provider_codes`` (ISO country code).
         """
         params: dict[str, object] = {

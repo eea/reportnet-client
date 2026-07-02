@@ -76,7 +76,7 @@ tests/
 |--------|----------|-------|
 | `import_file` | `POST /dataset/v2/importFileData/{datasetId}` | multipart/form-data |
 | `etl_import` | `POST /dataset/v1/{datasetId}/etlImport` | JSON; Citus datasets only |
-| `etl_export` | `GET /dataset/v{version}/etlExport/{datasetId}` | async; ZIP of CSVs; version=4 (default) or 5 |
+| `etl_export` | `GET /dataset/v{version}/etlExport/{datasetId}` | async; v4=ZIP of CSVs (default), v5=ZIP of Parquet (opt-in), v3=JSON (Citus) |
 | `export_file` | `POST /dataset/exportFile` | async; single-table CSV/XLSX |
 | `export_file_dl` | `POST /dataset/exportFileDL` | async; single-table BigData variant |
 | `export_dataset_file` | `GET /dataset/exportDatasetFile` | async; whole-dataset CSV/XLSX/ZIP |

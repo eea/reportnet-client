@@ -19,6 +19,32 @@ def _patch_random():
     return patch("reportnet._http.random.uniform", return_value=0.0)
 
 
+# ── api_key validation ───────────────────────────────────────────────────────
+# A blank api_key must be rejected here, at construction time, with a clear
+# error — rather than reaching httpx and failing deep in the stack with a
+# cryptic "Illegal header value" from a malformed `Authorization: ApiKey `.
+
+def test_empty_api_key_raises_value_error():
+    from reportnet import ReportnetClient
+
+    with pytest.raises(ValueError, match="empty"):
+        ReportnetClient(api_key="")
+
+
+def test_whitespace_only_api_key_raises_value_error():
+    from reportnet import ReportnetClient
+
+    with pytest.raises(ValueError, match="empty"):
+        ReportnetClient(api_key="   ")
+
+
+def test_api_key_is_stripped_of_surrounding_whitespace():
+    from reportnet import ReportnetClient
+
+    c = ReportnetClient(api_key="  real-key  ")
+    assert c._http._client.headers["Authorization"] == "ApiKey real-key"
+
+
 def test_get_retries_on_transport_error_then_succeeds(mock_router, client):
     call_count = 0
 

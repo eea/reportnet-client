@@ -24,7 +24,13 @@ def save_key(dataflow_id: int | str, api_key: str, *, sandbox: bool = False) -> 
     """Store an API key for a dataflow in the system keychain.
 
     Pass ``sandbox=True`` to store a sandbox key separately from the production key.
+
+    Raises:
+        ValueError: If *api_key* is empty or whitespace-only — storing a blank
+            key would silently corrupt every future request made with it.
     """
+    if not api_key or not api_key.strip():
+        raise ValueError("api_key must not be empty or whitespace-only.")
     _keyring().set_password(_service(sandbox), str(dataflow_id), api_key)
 
 
@@ -32,10 +38,16 @@ def get_key(dataflow_id: int | str, *, sandbox: bool = False) -> str:
     """Retrieve an API key for a dataflow from the system keychain.
 
     Pass ``sandbox=True`` to retrieve the sandbox key.
+
+    A blank (empty or whitespace-only) stored value is treated the same as
+    "not found" — it can only have gotten there via a caller that bypassed
+    :func:`save_key`'s validation, and silently using it would produce a
+    malformed ``Authorization`` header deep in the HTTP layer instead of a
+    clear error here.
     """
     svc = _service(sandbox)
     key = _keyring().get_password(svc, str(dataflow_id))
-    if key is None:
+    if key is None or not key.strip():
         env = "sandbox" if sandbox else "production"
         raise KeyError(
             f"No {env} API key found for dataflow {dataflow_id}. "

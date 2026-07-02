@@ -78,16 +78,23 @@ def _(dataflow_id_input, mo, sandbox_input):
 @app.cell
 def _(dataflow_id_input, key_input, mo, sandbox_input, save_btn):
     import reportnet as _rn
-    mo.stop(not save_btn.value or not key_input.value)
-    _rn.save_key(int(dataflow_id_input.value), key_input.value, sandbox=sandbox_input.value)
-    mo.callout(mo.md("API key saved — re-run the cell above to connect."), kind="success")
-    return
+
+    key_saved = False
+    if save_btn.value and key_input.value.strip():
+        _rn.save_key(int(dataflow_id_input.value), key_input.value, sandbox=sandbox_input.value)
+        mo.callout(mo.md("API key saved."), kind="success")
+        key_saved = True
+    return (key_saved,)
 
 
 @app.cell
-def _(country_code_input, dataflow_id_input, mo, sandbox_input):
+def _(country_code_input, dataflow_id_input, key_saved, mo, sandbox_input):
     import reportnet
 
+    # key_saved isn't used directly — depending on it makes this cell
+    # reconnect automatically right after a key is saved above, instead of
+    # showing stale connect state until manually re-run.
+    _ = key_saved
     _did = int(dataflow_id_input.value)
     _cc = country_code_input.value.strip().upper()
     _sandbox = sandbox_input.value

@@ -19,6 +19,13 @@ def _backoff(attempt: int) -> float:
 
 class HttpSession:
     def __init__(self, api_key: str, base_url: str, timeout: float) -> None:
+        api_key = api_key.strip() if api_key else api_key
+        if not api_key:
+            raise ValueError(
+                "api_key must not be empty or whitespace-only; got "
+                f"{api_key!r}. Check the value passed to ReportnetClient() "
+                "or stored via reportnet.save_key()."
+            )
         self._client = httpx.Client(
             base_url=base_url,
             headers={"Authorization": f"ApiKey {api_key}"},

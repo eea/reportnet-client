@@ -629,9 +629,12 @@ class JobHandle:
         timeout: float | None = None,
         on_status: Callable[[JobStatus], None] | None = None,
     ) -> dict[str, Any]:
-        """Wait for an export job and return its CSVs as DataFrames.
+        """Wait for an export job and return its tables as DataFrames.
 
-        Returns a dict keyed by table name (filename without .csv extension).
+        Supports CSV (v4), Parquet (v5), and JSON (v3) export formats —
+        see :func:`~reportnet._util.zip_to_frames`.
+
+        Returns a dict keyed by table name (filename without extension).
         Requires polars or pandas (``pip install reportnet[dataframe]``).
         """
         from ._util import zip_to_frames

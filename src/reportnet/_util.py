@@ -73,20 +73,26 @@ def to_file_tuple(
 def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
     """Unzip a ZIP export and return a dict of DataFrames keyed by table name.
 
-    Handles two formats:
+    Handles three formats:
 
     - **ZIP of CSVs** (v4 / BigData exports): one ``.csv`` file per table.
+    - **ZIP of Parquet** (v5 exports): one ``.parquet`` file per table.
     - **ZIP of JSON** (v3 / Citus exports): a single ``.json`` file containing
       all tables in the Reportnet ETL JSON envelope.
 
     Requires polars or pandas (``pip install reportnet[dataframe]``).
     Tries polars first; falls back to pandas if polars is not installed.
+    Reading Parquet (v5) with the pandas backend additionally requires
+    ``pyarrow`` or ``fastparquet``; polars reads Parquet natively.
     """
     try:
         import polars as pl
 
         def _read_csv(data: bytes) -> Any:
             return pl.read_csv(io.BytesIO(data))
+
+        def _read_parquet(data: bytes) -> Any:
+            return pl.read_parquet(io.BytesIO(data))
 
         def _records_to_frame(rows: list[dict[str, Any]]) -> Any:
             return pl.DataFrame(rows)
@@ -97,6 +103,9 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
 
             def _read_csv(data: bytes) -> Any:
                 return pd.read_csv(io.BytesIO(data))
+
+            def _read_parquet(data: bytes) -> Any:
+                return pd.read_parquet(io.BytesIO(data))
 
             def _records_to_frame(rows: list[dict[str, Any]]) -> Any:
                 return pd.DataFrame(rows)
@@ -110,10 +119,14 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         names = zf.namelist()
         csv_names = [n for n in names if n.lower().endswith(".csv")]
+        parquet_names = [n for n in names if n.lower().endswith(".parquet")]
         json_names = [n for n in names if n.lower().endswith(".json")]
 
         if csv_names:
             return {_table_name(n): _read_csv(zf.read(n)) for n in csv_names}
+
+        if parquet_names:
+            return {_table_name(n): _read_parquet(zf.read(n)) for n in parquet_names}
 
         if json_names:
             return _etl_json_to_frames(zf.read(json_names[0]), _records_to_frame)
@@ -122,9 +135,9 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
 
 
 def _table_name(path: str) -> str:
-    """'some/path/TableName.csv' → 'TableName'"""
+    """'some/path/TableName.csv' → 'TableName' (works for any extension)."""
     leaf = path.rsplit("/", 1)[-1]
-    return leaf[:-4] if leaf.lower().endswith(".csv") else leaf
+    return leaf.rsplit(".", 1)[0] if "." in leaf else leaf
 
 
 def _etl_json_to_frames(
