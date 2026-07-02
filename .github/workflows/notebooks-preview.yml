@@ -18,7 +18,9 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --group explore
+        run: |
+          uv sync --group explore
+          uv pip install keyrings.alt
 
       - name: Export notebooks to HTML
         run: |
@@ -43,7 +45,7 @@ jobs:
             const body = [
               '### 📓 Notebook preview',
               '',
-              `Download the **[notebook-preview artifact](${runUrl})** from this Actions run, unzip it, and open any `.html` file in your browser.`,
+              `Download the **[notebook-preview artifact](${runUrl})** from this Actions run, unzip it, and open any \`.html\` file in your browser.`,
               '',
               '| File | Contents |',
               '|---|---|',

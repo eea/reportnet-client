@@ -1,4 +1,5 @@
 import io
+import json
 import zipfile
 from unittest.mock import patch
 
@@ -14,6 +15,24 @@ def _make_zip(*csv_pairs: tuple[str, bytes]) -> bytes:
     with zipfile.ZipFile(buf, "w") as zf:
         for name, data in csv_pairs:
             zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def _make_json_zip(envelope: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("export.json", json.dumps(envelope))
+    return buf.getvalue()
+
+
+def _make_parquet_zip(*table_frames: tuple[str, object]) -> bytes:
+    """(archive_name, polars.DataFrame) pairs -> a ZIP of real .parquet bytes."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, frame in table_frames:
+            pbuf = io.BytesIO()
+            frame.write_parquet(pbuf)
+            zf.writestr(name, pbuf.getvalue())
     return buf.getvalue()
 
 POLLING_URL  = "/orchestrator/jobs/pollForJobStatus/200?datasetId=1&dataflowId=2"
@@ -151,6 +170,132 @@ def test_to_frames_strips_path_prefix(mock_router, client):
     with patch("time.sleep"):
         frames = handle.to_frames(poll_interval=0)
     assert list(frames) == ["MyTable"]
+
+
+# ── v3 / Citus JSON export (zip_to_frames JSON branch) ──────────────────────────
+
+def test_zip_to_frames_json_envelope_with_records():
+    """v3/Citus exports are a ZIP containing a single JSON file, not CSVs."""
+    pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    envelope = {
+        "tables": [
+            {
+                "tableName": "Emissions",
+                "totalRecords": 2,
+                "records": [
+                    {"fields": [{"fieldName": "country", "value": "IE"},
+                                {"fieldName": "value", "value": "1.2"}]},
+                    {"fields": [{"fieldName": "country", "value": "DE"},
+                                {"fieldName": "value", "value": "3.4"}]},
+                ],
+            }
+        ]
+    }
+    frames = zip_to_frames(_make_json_zip(envelope))
+    assert list(frames) == ["Emissions"]
+    assert frames["Emissions"].shape == (2, 2)
+    assert frames["Emissions"]["country"].to_list() == ["IE", "DE"]
+
+
+def test_zip_to_frames_json_envelope_empty_table_has_zero_rows():
+    """A table with zero records must produce a 0-row frame, not a phantom row."""
+    pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    envelope = {"tables": [{"tableName": "Emissions", "totalRecords": 0, "records": []}]}
+    frames = zip_to_frames(_make_json_zip(envelope))
+    assert frames["Emissions"].shape == (0, 0)
+
+
+def test_zip_to_frames_json_envelope_multiple_tables():
+    pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    envelope = {
+        "tables": [
+            {"tableName": "Emissions", "totalRecords": 0, "records": []},
+            {
+                "tableName": "Sites",
+                "totalRecords": 1,
+                "records": [{"fields": [{"fieldName": "id", "value": "1"}]}],
+            },
+        ]
+    }
+    frames = zip_to_frames(_make_json_zip(envelope))
+    assert set(frames) == {"Emissions", "Sites"}
+    assert frames["Emissions"].shape == (0, 0)
+    assert frames["Sites"].shape == (1, 1)
+
+
+# ── v5 Parquet export (zip_to_frames Parquet branch) ─────────────────────────────
+
+def test_zip_to_frames_parquet():
+    """v5 exports are a ZIP containing one .parquet file per table."""
+    pl = pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    zip_bytes = _make_parquet_zip(
+        ("Emissions.parquet", pl.DataFrame({"country": ["IE", "DE"], "value": [1.2, 3.4]})),
+        ("Sites.parquet", pl.DataFrame({"id": [1]})),
+    )
+    frames = zip_to_frames(zip_bytes)
+    assert set(frames) == {"Emissions", "Sites"}
+    assert frames["Emissions"].shape == (2, 2)
+    assert frames["Emissions"]["country"].to_list() == ["IE", "DE"]
+    assert frames["Sites"].shape == (1, 1)
+
+
+def test_zip_to_frames_parquet_strips_path_prefix():
+    pl = pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    zip_bytes = _make_parquet_zip(
+        ("dataset_1/MyTable.parquet", pl.DataFrame({"a": [1, 2]})),
+    )
+    frames = zip_to_frames(zip_bytes)
+    assert list(frames) == ["MyTable"]
+
+
+def test_zip_to_frames_prefers_csv_over_parquet_if_both_present():
+    """CSV (v4) takes priority — a ZIP shouldn't mix formats, but if it does,
+    the more common v4 format wins rather than silently picking either."""
+    pl = pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Table.csv", b"a,b\n1,2")
+        pbuf = io.BytesIO()
+        pl.DataFrame({"a": [1]}).write_parquet(pbuf)
+        zf.writestr("Table.parquet", pbuf.getvalue())
+
+    frames = zip_to_frames(buf.getvalue())
+    assert frames["Table"].shape == (1, 2)  # from the CSV, not the 1-column parquet
+
+
+def test_etl_export_v5_to_frames_end_to_end(mock_router, client):
+    """A full etl_export(version=5) -> .to_frames() round trip returns real DataFrames."""
+    pl = pytest.importorskip("polars")
+
+    zip_bytes = _make_parquet_zip(
+        ("Emissions.parquet", pl.DataFrame({"country": ["IE"], "value": [1.2]})),
+    )
+    mock_router.get("/dataset/v5/etlExport/1").mock(
+        return_value=httpx.Response(200, json=EXPORT_RESPONSE)
+    )
+    mock_router.get("/orchestrator/jobs/pollForJobStatus/200").mock(
+        return_value=httpx.Response(200, json={"status": "FINISHED", "downloadUrl": DOWNLOAD_URL})
+    )
+    mock_router.get("/orchestrator/jobs/downloadEtlExportedFile/200").mock(
+        return_value=httpx.Response(200, content=zip_bytes)
+    )
+    handle = client.etl_export(dataset_id=1, dataflow_id=2, version=5)
+    with patch("time.sleep"):
+        frames = handle.to_frames(poll_interval=0)
+    assert list(frames) == ["Emissions"]
+    assert frames["Emissions"]["country"].to_list() == ["IE"]
 
 
 def test_result_raises_on_non_export_handle(mock_router, client):

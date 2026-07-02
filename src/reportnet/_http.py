@@ -19,6 +19,13 @@ def _backoff(attempt: int) -> float:
 
 class HttpSession:
     def __init__(self, api_key: str, base_url: str, timeout: float) -> None:
+        api_key = api_key.strip() if api_key else api_key
+        if not api_key:
+            raise ValueError(
+                "api_key must not be empty or whitespace-only; got "
+                f"{api_key!r}. Check the value passed to ReportnetClient() "
+                "or stored via reportnet.save_key()."
+            )
         self._client = httpx.Client(
             base_url=base_url,
             headers={"Authorization": f"ApiKey {api_key}"},
@@ -51,12 +58,11 @@ class HttpSession:
                 continue
             # Only retry 5xx on GET — POST/PUT may have side effects.
             # Don't retry a 500 that is actually a wrapped auth failure.
-            is_auth_500 = r.status_code == 500 and "UNAUTHORIZED" in r.text
             if (
                 r.status_code in _RETRYABLE_5XX
                 and method == "GET"
                 and not last_attempt
-                and not is_auth_500
+                and not _is_wrapped_auth_500(r)
             ):
                 time.sleep(_backoff(attempt))
                 attempt += 1
@@ -74,6 +80,20 @@ class HttpSession:
         self.close()
 
 
+def _is_wrapped_auth_500(response: httpx.Response) -> bool:
+    """True if a 500 is actually a wrapped auth failure.
+
+    Reportnet gateway occasionally wraps auth failures as HTTP 500 (the inner
+    service returns 401 but the gateway swallows it). Used both to raise
+    AuthError instead of a generic APIError, and so the retry loop does not
+    waste attempts on a bad API key — must stay in sync between the two.
+    """
+    if response.status_code != 500:
+        return False
+    body = response.text
+    return "UNAUTHORIZED" in body or '"401"' in body or "'401'" in body
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code in (401, 403):
         raise AuthError(response.status_code, response.text)
@@ -82,13 +102,6 @@ def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code == 429:
         raise RateLimitError(response.status_code, response.text)
     if response.status_code >= 400:
-        # Reportnet gateway occasionally wraps auth failures as HTTP 500
-        # (the inner service returns 401 but the gateway swallows it).
-        # Detect this so callers see AuthError rather than a generic APIError,
-        # and so the retry loop does not waste attempts on a bad API key.
-        body = response.text
-        if response.status_code == 500 and (
-            "UNAUTHORIZED" in body or '"401"' in body or "'401'" in body
-        ):
-            raise AuthError(response.status_code, body)
-        raise APIError(response.status_code, body)
+        if _is_wrapped_auth_500(response):
+            raise AuthError(response.status_code, response.text)
+        raise APIError(response.status_code, response.text)

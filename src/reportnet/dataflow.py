@@ -316,9 +316,12 @@ class DataflowClient:
         - ``3`` (default for Citus dataflows) — asynchronous, returns JSON;
           requires a country code (``dataProviderCodes``), injected automatically
           when the client was created via :meth:`find_reporter`.
+        - ``5`` (analytics, opt-in) — asynchronous, returns a ZIP of Parquet files;
+          same shape as v4 but smaller/faster to load. Must be requested
+          explicitly with ``version=5``; never chosen automatically.
 
         When *version* is ``None`` (the default), the correct version is chosen
-        automatically by calling :meth:`is_big_dataflow`.
+        automatically by calling :meth:`is_big_dataflow` — between v3 and v4 only.
 
         Args:
             data_provider_codes: ISO 3166-1 alpha-2 country code passed as

@@ -1,10 +1,36 @@
 # reportnet-client (Beta)
 
+[![Tests](https://github.com/eea/reportnet-client/actions/workflows/tests.yml/badge.svg)](https://github.com/eea/reportnet-client/actions/workflows/tests.yml)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+
 > **Beta** — the client may change and requires more testing before version 1.0.
 
 Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.eu/rest-api/).
 
 **[Full documentation](https://eea.github.io/reportnet-client/)**
+
+## Contents
+
+- [Installation](#installation)
+- [Concepts](#concepts)
+- [Environments](#environments)
+- [Setup](#setup)
+- [Reporter workflow](#reporter-workflow)
+- [Discover the schema](#discover-the-schema)
+- [Build data to upload](#build-data-to-upload)
+- [Import data](#import-data)
+- [Export data](#export-data)
+- [Spatial data](#spatial-data)
+- [Validate a dataset](#validate-a-dataset)
+- [Reference datasets](#reference-datasets)
+- [Custodian workflow](#custodian-workflow)
+- [Job polling](#job-polling)
+- [Release history](#release-history)
+- [Dataset management](#dataset-management)
+- [Provider helpers](#provider-helpers)
+- [Error handling](#error-handling)
+- [Development](#development)
+- [Interactive notebooks](#interactive-notebooks)
 
 ## Installation
 
@@ -260,13 +286,22 @@ xlsx_bytes = handle.result()
 `etl_export` automatically picks the correct API version for the dataflow backend:
 v4 (ZIP of CSVs) for BigData/DLT2 dataflows, v3 (ZIP containing JSON) for Citus dataflows.
 
+For analytics workflows, pass `version=5` to get a ZIP of Parquet files instead —
+same shape as v4, smaller and faster to load. It's opt-in only (never auto-selected);
+`to_frames()` handles it transparently:
+
+```python
+frames = ie.etl_export(dataset_id=ds.id, version=5).to_frames()
+# {"Table1a": <polars.DataFrame>, "Table7": <polars.DataFrame>}
+```
+
 ## Spatial data
 
 Datasets with geometry fields (`POINT`, `POLYGON`, `MULTIPOLYGON`, etc.) store
 values as WKT strings (v4 exports) or GeoJSON strings (v3 exports).
 `to_geodataframe()` handles both formats automatically:
 
-```python
+```bash
 pip install "reportnet-client[spatial]"
 ```
 
@@ -476,7 +511,7 @@ Three [marimo](https://marimo.io) notebooks are included for interactive explora
 | `notebooks/02_import_export_pipeline.py` | End-to-end import → validate → export workflow |
 | `notebooks/03_spatial_geodataframe.py` | Export spatial data and convert to a geopandas GeoDataFrame |
 
-**Run locally:**
+### Run locally
 
 ```bash
 # Install the explore group (marimo + polars); add geopandas for notebook 03
@@ -491,7 +526,7 @@ The notebook opens in your browser. Your API key is loaded from the system keych
 (set it once with `reportnet.save_key(dataflow_id, "your-key")`). All three notebooks have a
 **Sandbox** checkbox to connect to `sandbox.reportnet.europa.eu` instead of production.
 
-**Static preview (read-only, no server needed):**
+### Static preview (read-only, no server needed)
 
 ```bash
 # Export a self-contained HTML snapshot

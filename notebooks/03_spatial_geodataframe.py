@@ -78,48 +78,37 @@ def _(dataflow_id_input, mo, sandbox_input):
 @app.cell
 def _(dataflow_id_input, key_input, mo, sandbox_input, save_btn):
     import reportnet as _rn
-    mo.stop(not save_btn.value or not key_input.value)
-    _rn.save_key(int(dataflow_id_input.value), key_input.value, sandbox=sandbox_input.value)
-    mo.callout(mo.md("API key saved — re-run the cell above to connect."), kind="success")
-    return
+
+    key_saved = False
+    if save_btn.value and key_input.value.strip():
+        _rn.save_key(int(dataflow_id_input.value), key_input.value, sandbox=sandbox_input.value)
+        mo.callout(mo.md("API key saved."), kind="success")
+        key_saved = True
+    return (key_saved,)
 
 
 @app.cell
-def _(country_code_input, dataflow_id_input, mo, sandbox_input):
+def _(country_code_input, dataflow_id_input, key_saved, mo, sandbox_input):
     import reportnet
 
+    # key_saved isn't used directly — depending on it makes this cell
+    # reconnect automatically right after a key is saved above, instead of
+    # showing stale connect state until manually re-run.
+    _ = key_saved
     _did = int(dataflow_id_input.value)
     _cc = country_code_input.value.strip().upper()
     _sandbox = sandbox_input.value
 
-    try:
-        _client = reportnet.ReportnetClient.from_keyring(_did, sandbox=_sandbox)
-        _base_flow = _client.for_dataflow(_did)
-        flow = _base_flow.find_reporter(_cc)
-        connect_ok = True
+    flow, _error = reportnet.connect_interactive(_did, sandbox=_sandbox, country_code=_cc)
+    connect_ok = flow is not None
+    if connect_ok:
         _env_label = "sandbox" if _sandbox else "production"
         mo.callout(
             mo.md(f"Connected as **{_cc}** on dataflow **{_did}** ({_env_label})"),
             kind="success",
         )
-    except KeyError:
-        flow = None
-        connect_ok = False
-        mo.callout(
-            mo.md(
-                f"No API key found for dataflow {_did}.  \n"
-                f"Expand *Save API key* above to store your key."
-            ),
-            kind="danger",
-        )
-    except ValueError as _e:
-        flow = None
-        connect_ok = False
-        mo.callout(mo.md(f"Country lookup failed: {_e}"), kind="danger")
-    except reportnet.AuthError:
-        flow = None
-        connect_ok = False
-        mo.callout(mo.md("API key is invalid or has been revoked."), kind="danger")
+    else:
+        mo.callout(mo.md(_error), kind="danger")
     return connect_ok, flow, reportnet
 
 

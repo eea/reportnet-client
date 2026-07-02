@@ -45,11 +45,17 @@ frames = ie.etl_export(dataset_id=93953).to_frames(
 
 ## ETL export v5 — Parquet
 
-Use `version=5` to receive Parquet files instead of CSVs (advanced use):
+Use `version=5` to receive Parquet files instead of CSVs — same shape as v4,
+smaller and faster to load. It's opt-in only and never chosen automatically.
+`to_frames()` handles it transparently, same as v4:
 
 ```python
-handle = ie.etl_export(dataset_id=93953, version=5)
+frames = ie.etl_export(dataset_id=93953, version=5).to_frames(poll_interval=10.0, timeout=600.0)
+# {"Table1a": <polars.DataFrame>, "Table1b": <polars.DataFrame>}
 ```
+
+Reading Parquet with the pandas backend additionally requires `pyarrow` or
+`fastparquet`; polars reads Parquet natively with no extra dependency.
 
 ## Single-table export
 

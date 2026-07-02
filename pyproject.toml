@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "reportnet-client"
-version = "0.3.0"
+version = "0.4.0"
 description = "Python client library for the EEA Reportnet 3 REST API"
 requires-python = ">=3.10"
 classifiers = [
@@ -42,6 +42,7 @@ explore = [
 packages = ["src/reportnet"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = ["integration: live API tests (require keyring credentials and network access)"]
 
 [tool.ruff]
