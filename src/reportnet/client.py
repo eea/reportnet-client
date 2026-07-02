@@ -140,18 +140,14 @@ class ReportnetClient:
         return [TestDataset.from_dict(d) for d in raw]
 
     def is_big_dataflow(self, *, dataflow_id: int) -> bool:
-        """GET /dataflow/private/v1/{dataflowId}/isBigDataflow — BigData (DLT2) flag.
+        """Return True if *dataflow_id* is a BigData (DLT2) dataflow.
 
-        Returns False for Citus dataflows (endpoint returns 404 for those).
+        Reads the ``bigData`` field from GET /dataflow/v1/{dataflowId}. The
+        dedicated GET /dataflow/private/v1/{dataflowId}/isBigDataflow endpoint
+        looks purpose-built for this but 404s for API-key auth regardless of
+        the dataflow's actual BigData status, so it isn't used here.
         """
-        from .exceptions import APIError
-        try:
-            response = self._http.get(f"/dataflow/private/v1/{dataflow_id}/isBigDataflow")
-            return bool(response.json())
-        except APIError as exc:
-            if exc.status_code == 404:
-                return False
-            raise
+        return self.get_dataflow(dataflow_id=dataflow_id).big_data
 
     def close(self) -> None:
         self._http.close()
