@@ -18,7 +18,9 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --group explore
+        run: |
+          uv sync --group explore
+          uv pip install keyrings.alt
 
       - name: Export notebooks to HTML
         run: |
