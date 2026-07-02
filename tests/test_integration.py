@@ -340,6 +340,52 @@ def test_export_dataset_file_dl(df_1619):
     assert len(zip_bytes) > 0
 
 
+# ── BigData dataflow (2003) — reporter-scoped v4 export ─────────────────────────
+# Regression coverage for a bug where v4/v5 etlExport 403'd whenever providerId
+# was included, which DataflowClient auto-injected for any reporter-scoped
+# client (for_provider / find_reporter). See dataflow.py etl_export().
+
+DATAFLOW_ID_BIGDATA = 2003
+
+
+@pytest.fixture(scope="module")
+def client_2003():
+    try:
+        key = reportnet.get_key(DATAFLOW_ID_BIGDATA)
+    except KeyError:
+        pytest.skip(f"No API key in keyring for dataflow {DATAFLOW_ID_BIGDATA}")
+    return reportnet.ReportnetClient(api_key=key)
+
+
+@pytest.fixture(scope="module")
+def df_2003(client_2003):
+    return client_2003.for_dataflow(DATAFLOW_ID_BIGDATA)
+
+
+@pytest.mark.integration
+def test_is_big_dataflow_2003(df_2003):
+    assert df_2003.is_big_dataflow() is True
+
+
+@pytest.mark.integration
+def test_etl_export_v4_scoped_reporter_no_403(df_2003):
+    """v4 etlExport must not auto-inject providerId for a reporter-scoped
+    DataflowClient — the API 403s if it does, even when the id matches the
+    dataset's actual owner. Only checks kickoff + first poll (not full
+    completion) since job processing time isn't part of what's regression-
+    tested here."""
+    reporters = df_2003.get_reporters()
+    assert reporters, "no reporters in dataflow"
+    pid = reporters[0].provider_id
+    scoped = df_2003.for_provider(pid)
+    datasets = scoped.get_reporting_datasets()
+    assert datasets, "no reporting datasets for this provider"
+
+    handle = scoped.etl_export(dataset_id=datasets[0].id)
+    status = handle.status()
+    print(f"\n  provider_id={pid} dataset={datasets[0].id} status={status}")
+
+
 # ── Validation ────────────────────────────────────────────────────────────────
 
 @pytest.mark.integration

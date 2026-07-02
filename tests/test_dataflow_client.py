@@ -61,6 +61,25 @@ def test_etl_export_prefills_dataflow_id(mock_router, df_client):
     assert "dataflowId=5" in str(route.calls[0].request.url)
 
 
+def test_etl_export_v4_does_not_auto_fill_provider_id(mock_router, df_client):
+    """v4/v5 (BigData) reject providerId with a 403 for reporter-level keys,
+    so unlike other methods, the stored provider_id must not be auto-injected."""
+    route = mock_router.get("/dataset/v4/etlExport/10").mock(
+        return_value=httpx.Response(200, json={"pollingUrl": POLLING_URL, "status": "QUEUED"})
+    )
+    handle = df_client.etl_export(dataset_id=10, version=4)
+    assert "providerId" not in str(route.calls[0].request.url)
+    assert handle._provider_id is None
+
+
+def test_etl_export_v4_forwards_explicit_provider_id_override(mock_router, df_client):
+    route = mock_router.get("/dataset/v4/etlExport/10").mock(
+        return_value=httpx.Response(200, json={"pollingUrl": POLLING_URL, "status": "QUEUED"})
+    )
+    df_client.etl_export(dataset_id=10, version=4, provider_id=99)
+    assert "providerId=99" in str(route.calls[0].request.url)
+
+
 def test_etl_export_uses_v3_for_citus(mock_router, df_client):
     mock_router.get("/dataflow/v1/5").mock(
         return_value=httpx.Response(200, json={"id": 5, "bigData": False})
