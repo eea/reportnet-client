@@ -260,15 +260,15 @@ def test_dataflow_client_get_test_datasets(mock_router, client):
 # ── is_big_dataflow ───────────────────────────────────────────────────────────
 
 def test_is_big_dataflow_true(mock_router, client):
-    mock_router.get("/dataflow/private/v1/1619/isBigDataflow").mock(
-        return_value=httpx.Response(200, json=True)
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json={**DATAFLOW_RESPONSE, "bigData": True})
     )
     assert client.is_big_dataflow(dataflow_id=1619) is True
 
 
 def test_is_big_dataflow_false(mock_router, client):
-    mock_router.get("/dataflow/private/v1/1619/isBigDataflow").mock(
-        return_value=httpx.Response(200, json=False)
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json={**DATAFLOW_RESPONSE, "bigData": False})
     )
     assert client.for_dataflow(1619).is_big_dataflow() is False
 

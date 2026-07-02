@@ -24,6 +24,7 @@ class DataflowInfo:
     description: str
     type: str    # e.g. "REPORTING", "BUSINESS", "CITIZEN_SCIENCE"
     status: str  # e.g. "DESIGN", "DRAFT", "PUBLIC"
+    big_data: bool = False  # BigData (DLT2) dataflow, from the "bigData" field
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "DataflowInfo":
@@ -33,6 +34,7 @@ class DataflowInfo:
             description=d.get("description") or "",
             type=d.get("type") or "",
             status=d.get("status") or "",
+            big_data=bool(d.get("bigData", False)),
         )
 
 

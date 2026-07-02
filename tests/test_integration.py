@@ -47,9 +47,6 @@ def test_get_dataflow_info(df_1619):
 
 
 @pytest.mark.integration
-@pytest.mark.xfail(
-    reason="/dataflow/private/v1/*/isBigDataflow returned 404 — endpoint not available for this key"
-)
 def test_is_big_dataflow(df_1619):
     is_big = df_1619.is_big_dataflow()
     print(f"\n  BigData: {is_big}")

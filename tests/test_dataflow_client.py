@@ -50,8 +50,8 @@ def test_import_file_overrides_provider_id(mock_router, df_client):
 
 
 def test_etl_export_prefills_dataflow_id(mock_router, df_client):
-    mock_router.get("/dataflow/private/v1/5/isBigDataflow").mock(
-        return_value=httpx.Response(200, json=True)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True})
     )
     route = mock_router.get("/dataset/v4/etlExport/10").mock(
         return_value=httpx.Response(200, json={"pollingUrl": POLLING_URL, "status": "QUEUED"})
@@ -62,8 +62,8 @@ def test_etl_export_prefills_dataflow_id(mock_router, df_client):
 
 
 def test_etl_export_uses_v3_for_citus(mock_router, df_client):
-    mock_router.get("/dataflow/private/v1/5/isBigDataflow").mock(
-        return_value=httpx.Response(404, json={})
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": False})
     )
     route = mock_router.get("/dataset/v3/etlExport/10").mock(
         return_value=httpx.Response(200, json={"pollingUrl": POLLING_URL, "status": "QUEUED"})
