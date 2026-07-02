@@ -61,10 +61,27 @@ class DataflowClient:
         self._dataflow_id = dataflow_id
         self._provider_id = provider_id
         self._country_code = country_code
+        self._is_big_cache: bool | None = None
 
     def _pid(self, override: int | None) -> int | None:
         """Return override if given, else fall back to the stored provider_id."""
         return override if override is not None else self._provider_id
+
+    def _pid_bigdata_safe(self, override: int | None) -> int | None:
+        """Like :meth:`_pid`, but never auto-fills the stored provider_id for
+        BigData (DLT2) dataflows.
+
+        Confirmed live against a BigData dataflow: the API 403s on
+        etlExport/importFileData whenever providerId is present at all, even
+        when it correctly matches the dataset's own owner. Only used by
+        methods where this has been verified; other endpoints still use
+        :meth:`_pid`.
+        """
+        if override is not None:
+            return override
+        if self._provider_id is None:
+            return None
+        return None if self.is_big_dataflow() else self._provider_id
 
     def for_provider(self, provider_id: int) -> "DataflowClient":
         """Return a new DataflowClient scoped to a specific reporter / country.
@@ -189,8 +206,15 @@ class DataflowClient:
         return self._client.get_test_datasets(dataflow_id=self._dataflow_id)
 
     def is_big_dataflow(self) -> bool:
-        """Return True if this is a BigData (DLT2) dataflow."""
-        return self._client.is_big_dataflow(dataflow_id=self._dataflow_id)
+        """Return True if this is a BigData (DLT2) dataflow.
+
+        Cached per instance — BigData-ness doesn't change over the lifetime
+        of a DataflowClient, and this is now consulted by more than one
+        method (etl_export, import_file).
+        """
+        if self._is_big_cache is None:
+            self._is_big_cache = self._client.is_big_dataflow(dataflow_id=self._dataflow_id)
+        return self._is_big_cache
 
     # ── Import ────────────────────────────────────────────────────────────────
 
@@ -206,12 +230,19 @@ class DataflowClient:
         delimiter: str = "|",
         integration_id: int | None = None,
     ) -> JobHandle:
+        """POST /dataset/v2/importFileData/{datasetId} — multipart upload.
+
+        Unlike other methods on this class, ``provider_id`` is not auto-filled
+        from the stored ``provider_id`` for BigData (DLT2) dataflows — the API
+        403s if ``providerId`` is present at all, even the correct one. See
+        :meth:`etl_export` for the same behavior on the export side.
+        """
         return self._client.import_file(
             dataset_id=dataset_id,
             dataflow_id=self._dataflow_id,
             file=file,
             filename=filename,
-            provider_id=self._pid(provider_id),
+            provider_id=self._pid_bigdata_safe(provider_id),
             table_schema_id=table_schema_id,
             replace=replace,
             delimiter=delimiter,
