@@ -31,6 +31,10 @@ env/
 .coverage
 htmlcov/
 .tox/
+temp/
+
+# Local-only notes
+REVIEW.md
 
 # Type checking
 .mypy_cache/
