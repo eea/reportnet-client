@@ -328,13 +328,23 @@ class DataflowClient:
                 ``dataProviderCodes`` to the v3 endpoint (e.g. ``"FR"``).
                 Inferred automatically when the client was obtained via
                 :meth:`find_reporter`.
+            provider_id: Unlike other methods on this class, this is **not**
+                auto-filled from the ``provider_id`` this client was scoped
+                with (e.g. via :meth:`for_provider` / :meth:`find_reporter`).
+                For v4/v5 (BigData), ``dataset_id`` already identifies a
+                single provider's dataset, and sending ``providerId`` — even
+                the correct one — gets a 403 from the API for reporter-level
+                keys. Only pass this if you have confirmed your key/dataflow
+                combination needs it.
         """
         if version is None:
             version = 4 if self.is_big_dataflow() else 3
-        # v3 uses dataProviderCodes (country code) instead of providerId.
-        # Sending both causes a 403, so only pass providerId for v4+.
+        # v3 (Citus) uses dataProviderCodes (country code) instead of providerId.
+        # v4/v5 (BigData) reject providerId outright (403) for reporter-level
+        # keys, so — unlike other methods — it is never auto-filled from the
+        # stored provider_id here; only an explicit override is forwarded.
         dpc = data_provider_codes or (self._country_code if version == 3 else None)
-        pid = None if version == 3 else self._pid(provider_id)
+        pid = provider_id if version != 3 else None
         return self._client.etl_export(
             dataset_id=dataset_id,
             dataflow_id=self._dataflow_id,
