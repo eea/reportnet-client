@@ -127,6 +127,29 @@ def test_500_wrapping_401_is_not_retried(mock_router, client):
     assert call_count == 1  # no retry
 
 
+def test_500_wrapping_401_via_status_code_string_is_not_retried(mock_router, client):
+    """Same as above, but the body only contains '"401"', not the word UNAUTHORIZED.
+
+    The retry-skip check and the exception-raising check must recognize the
+    same set of wrapped-401 bodies — otherwise this variant gets retried
+    (wasting up to 3 attempts with exponential back-off) before AuthError is
+    finally raised.
+    """
+    body = '{"status":500,"error":"Internal Server Error","message":"401"}'
+    call_count = 0
+
+    def mock_request(method, url, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(500, text=body)
+
+    with patch.object(client._http._client, "request", side_effect=mock_request):
+        with pytest.raises(AuthError):
+            client.get_dataflow(dataflow_id=1)
+
+    assert call_count == 1  # no retry
+
+
 def test_ping_returns_false_on_500_wrapped_401(mock_router, client):
     """ping() should return False when the API key is rejected via a 500-wrapped 401."""
     body = '{"message":"401 UNAUTHORIZED","status":500}'

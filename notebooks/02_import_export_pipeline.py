@@ -87,35 +87,19 @@ def _(country_code_cfg, dataflow_id_cfg, mo, sandbox_cfg):
     DATAFLOW_ID = int(dataflow_id_cfg.value)
     COUNTRY_CODE = country_code_cfg.value.strip().upper()
 
-    try:
-        _client = reportnet.ReportnetClient.from_keyring(DATAFLOW_ID, sandbox=sandbox_cfg.value)
-        _flow_base = _client.for_dataflow(DATAFLOW_ID)
-        # find_reporter looks up the provider_id from the country code automatically
-        flow = _flow_base.find_reporter(COUNTRY_CODE)
-        connect_ok = True
+    # find_reporter looks up the provider_id from the country code automatically
+    flow, _error = reportnet.connect_interactive(
+        DATAFLOW_ID, sandbox=sandbox_cfg.value, country_code=COUNTRY_CODE
+    )
+    connect_ok = flow is not None
+    if connect_ok:
         _env_label = "sandbox" if sandbox_cfg.value else "production"
         mo.callout(
             mo.md(f"Connected as **{COUNTRY_CODE}** on dataflow **{DATAFLOW_ID}** ({_env_label})"),
             kind="success",
         )
-    except KeyError:
-        flow = None
-        connect_ok = False
-        mo.callout(
-            mo.md(
-                f"No API key found for dataflow {DATAFLOW_ID}.  \n"
-                f"Expand *Save API key* above to store your key."
-            ),
-            kind="danger",
-        )
-    except ValueError as _e:
-        flow = None
-        connect_ok = False
-        mo.callout(mo.md(f"Country lookup failed: {_e}"), kind="danger")
-    except reportnet.AuthError:
-        flow = None
-        connect_ok = False
-        mo.callout(mo.md("API key is invalid or has been revoked."), kind="danger")
+    else:
+        mo.callout(mo.md(_error), kind="danger")
     return COUNTRY_CODE, DATAFLOW_ID, connect_ok, flow, reportnet
 
 

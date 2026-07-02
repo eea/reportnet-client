@@ -92,34 +92,16 @@ def _(country_code_input, dataflow_id_input, mo, sandbox_input):
     _cc = country_code_input.value.strip().upper()
     _sandbox = sandbox_input.value
 
-    try:
-        _client = reportnet.ReportnetClient.from_keyring(_did, sandbox=_sandbox)
-        _base_flow = _client.for_dataflow(_did)
-        flow = _base_flow.find_reporter(_cc)
-        connect_ok = True
+    flow, _error = reportnet.connect_interactive(_did, sandbox=_sandbox, country_code=_cc)
+    connect_ok = flow is not None
+    if connect_ok:
         _env_label = "sandbox" if _sandbox else "production"
         mo.callout(
             mo.md(f"Connected as **{_cc}** on dataflow **{_did}** ({_env_label})"),
             kind="success",
         )
-    except KeyError:
-        flow = None
-        connect_ok = False
-        mo.callout(
-            mo.md(
-                f"No API key found for dataflow {_did}.  \n"
-                f"Expand *Save API key* above to store your key."
-            ),
-            kind="danger",
-        )
-    except ValueError as _e:
-        flow = None
-        connect_ok = False
-        mo.callout(mo.md(f"Country lookup failed: {_e}"), kind="danger")
-    except reportnet.AuthError:
-        flow = None
-        connect_ok = False
-        mo.callout(mo.md("API key is invalid or has been revoked."), kind="danger")
+    else:
+        mo.callout(mo.md(_error), kind="danger")
     return connect_ok, flow, reportnet
 
 

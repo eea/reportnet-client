@@ -562,8 +562,8 @@ def test_import_frames_dict(df_1619):
 def test_to_mermaid(df_1619):
     mmd = df_1619.to_mermaid()
     assert mmd.startswith("graph LR")
-    assert 'df[["' in mmd                  # dataflow node
-    assert "subgraph cluster_" in mmd      # at least one reporter cluster
+    assert 'df[["' in mmd           # dataflow node
+    assert "\n    p_" in mmd        # at least one reporter node (one per provider)
     print(f"\n  Mermaid length: {len(mmd)} chars")
 
 

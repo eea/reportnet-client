@@ -1,4 +1,5 @@
 import io
+import json
 import zipfile
 from unittest.mock import patch
 
@@ -14,6 +15,13 @@ def _make_zip(*csv_pairs: tuple[str, bytes]) -> bytes:
     with zipfile.ZipFile(buf, "w") as zf:
         for name, data in csv_pairs:
             zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def _make_json_zip(envelope: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("export.json", json.dumps(envelope))
     return buf.getvalue()
 
 POLLING_URL  = "/orchestrator/jobs/pollForJobStatus/200?datasetId=1&dataflowId=2"
@@ -151,6 +159,63 @@ def test_to_frames_strips_path_prefix(mock_router, client):
     with patch("time.sleep"):
         frames = handle.to_frames(poll_interval=0)
     assert list(frames) == ["MyTable"]
+
+
+# ── v3 / Citus JSON export (zip_to_frames JSON branch) ──────────────────────────
+
+def test_zip_to_frames_json_envelope_with_records():
+    """v3/Citus exports are a ZIP containing a single JSON file, not CSVs."""
+    pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    envelope = {
+        "tables": [
+            {
+                "tableName": "Emissions",
+                "totalRecords": 2,
+                "records": [
+                    {"fields": [{"fieldName": "country", "value": "IE"},
+                                {"fieldName": "value", "value": "1.2"}]},
+                    {"fields": [{"fieldName": "country", "value": "DE"},
+                                {"fieldName": "value", "value": "3.4"}]},
+                ],
+            }
+        ]
+    }
+    frames = zip_to_frames(_make_json_zip(envelope))
+    assert list(frames) == ["Emissions"]
+    assert frames["Emissions"].shape == (2, 2)
+    assert frames["Emissions"]["country"].to_list() == ["IE", "DE"]
+
+
+def test_zip_to_frames_json_envelope_empty_table_has_zero_rows():
+    """A table with zero records must produce a 0-row frame, not a phantom row."""
+    pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    envelope = {"tables": [{"tableName": "Emissions", "totalRecords": 0, "records": []}]}
+    frames = zip_to_frames(_make_json_zip(envelope))
+    assert frames["Emissions"].shape == (0, 0)
+
+
+def test_zip_to_frames_json_envelope_multiple_tables():
+    pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    envelope = {
+        "tables": [
+            {"tableName": "Emissions", "totalRecords": 0, "records": []},
+            {
+                "tableName": "Sites",
+                "totalRecords": 1,
+                "records": [{"fields": [{"fieldName": "id", "value": "1"}]}],
+            },
+        ]
+    }
+    frames = zip_to_frames(_make_json_zip(envelope))
+    assert set(frames) == {"Emissions", "Sites"}
+    assert frames["Emissions"].shape == (0, 0)
+    assert frames["Sites"].shape == (1, 1)
 
 
 def test_result_raises_on_non_export_handle(mock_router, client):

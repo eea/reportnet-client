@@ -148,7 +148,7 @@ def _etl_json_to_frames(
             {f["fieldName"]: f["value"] for f in rec.get("fields", [])}
             for rec in table.get("records", [])
         ]
-        result[name] = records_to_frame(rows) if rows else records_to_frame([{}])
+        result[name] = records_to_frame(rows)
     return result
 
 
@@ -403,7 +403,8 @@ def to_geodataframe(
     first_valid = next((v for v in col if v and isinstance(v, str)), None)
     if first_valid and first_valid.lstrip().startswith("{"):
         import json as _json
-        from shapely.geometry import shape as _shape
+
+        from shapely.geometry import shape as _shape  # type: ignore[import-untyped]
 
         def _parse(val: Any) -> Any:
             if not val or not isinstance(val, str):

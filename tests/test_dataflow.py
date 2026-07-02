@@ -423,3 +423,74 @@ def test_find_reporter_unknown_country_raises(mock_router, client):
     )
     with pytest.raises(ValueError, match="XX"):
         client.for_dataflow(1619).find_reporter("XX")
+
+
+# ── to_mermaid ────────────────────────────────────────────────────────────────
+# get_dataflow / get_reference_datasets / get_reporting_datasets / get_test_datasets
+# all hit the same GET /dataflow/v1/{id} endpoint, so one mock covers all of them.
+
+def test_to_mermaid_basic_structure(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    mmd = client.for_dataflow(1619).to_mermaid()
+
+    assert mmd.startswith("graph LR")
+    assert 'df[["' in mmd                 # dataflow node
+    assert "id=1619" in mmd
+    assert "ref_93975" in mmd             # reference dataset node
+    # One node per provider (France=56, Italy=64), not per reporting dataset
+    assert "p_56" in mmd
+    assert "p_64" in mmd
+    # Test datasets are excluded unless include_test=True
+    assert "test_93953" not in mmd
+    assert "test_93957" not in mmd
+
+
+def test_to_mermaid_include_test(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    mmd = client.for_dataflow(1619).to_mermaid(include_test=True)
+
+    assert "test_93953" in mmd
+    assert "test_93957" in mmd
+
+
+def test_to_mermaid_escapes_html_special_chars(mock_router, client):
+    resp = {
+        **DATAFLOW_RESPONSE,
+        "name": 'A & B <script> "quoted" #tag',
+        "reportingDatasets": [],
+        "referenceDatasets": [],
+        "testDatasets": [],
+    }
+    mock_router.get("/dataflow/v1/1619").mock(return_value=httpx.Response(200, json=resp))
+    mmd = client.for_dataflow(1619).to_mermaid()
+
+    assert "<script>" not in mmd
+    assert "&amp;" in mmd
+    assert "&lt;script&gt;" in mmd
+    assert "&quot;quoted&quot;" in mmd
+    assert "#35;tag" in mmd
+
+
+def test_to_mermaid_colors_provider_node_by_worst_status(mock_router, client):
+    resp = {
+        "id": 1619, "name": "x", "description": "", "type": "REPORTING", "status": "PUBLIC",
+        "reportingDatasets": [
+            {"id": 1, "dataSetName": "France", "dataProviderId": 56,
+             "datasetSchema": "s1", "nameDatasetSchema": "Table1a", "status": "FINAL"},
+            {"id": 2, "dataSetName": "France", "dataProviderId": 56,
+             "datasetSchema": "s2", "nameDatasetSchema": "Table7",
+             "status": "CORRECTION_REQUESTED"},
+        ],
+        "referenceDatasets": [],
+        "testDatasets": [],
+    }
+    mock_router.get("/dataflow/v1/1619").mock(return_value=httpx.Response(200, json=resp))
+    mmd = client.for_dataflow(1619).to_mermaid()
+
+    # Worst status across France's two tables is CORRECTION_REQUESTED -> orange fill
+    assert "style p_56 fill:#FFD580" in mmd
+    assert "1/2 FINAL" in mmd

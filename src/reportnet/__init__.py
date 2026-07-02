@@ -1,5 +1,5 @@
 from ._util import cast_frame, table_to_frame, to_geodataframe
-from .client import PRODUCTION_URL, SANDBOX_URL, ReportnetClient
+from .client import PRODUCTION_URL, SANDBOX_URL, ReportnetClient, connect_interactive
 from .dataflow import DataflowClient
 from .exceptions import (
     APIError,
@@ -33,6 +33,7 @@ __all__ = [
     "SANDBOX_URL",
     "ReportnetClient",
     "DataflowClient",
+    "connect_interactive",
     "JobHandle",
     "JobStatus",
     "DataflowInfo",
