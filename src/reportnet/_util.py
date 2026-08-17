@@ -51,7 +51,7 @@ def to_file_tuple(
     except ImportError:
         raise ImportError(
             "narwhals is required to pass a DataFrame; "
-            "install it with: pip install reportnet[dataframe]"
+            "install it with: pip install reportnet-client[dataframe]"
         ) from None
 
     try:
@@ -80,7 +80,7 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
     - **ZIP of JSON** (v3 / Citus exports): a single ``.json`` file containing
       all tables in the Reportnet ETL JSON envelope.
 
-    Requires polars or pandas (``pip install reportnet[dataframe]``).
+    Requires polars or pandas (``pip install reportnet-client[dataframe]``).
     Tries polars first; falls back to pandas if polars is not installed.
     Reading Parquet (v5) with the pandas backend additionally requires
     ``pyarrow`` or ``fastparquet``; polars reads Parquet natively.
@@ -113,7 +113,7 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
         except ImportError:
             raise ImportError(
                 "polars or pandas is required to read DataFrames; "
-                "install with: pip install reportnet[dataframe]"
+                "install with: pip install reportnet-client[dataframe]"
             ) from None
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -188,7 +188,7 @@ def table_to_frame(
 ) -> NativeFrame:
     """Return an empty DataFrame whose columns and types match *table_schema*.
 
-    Requires ``pip install reportnet[dataframe]``.
+    Requires ``pip install reportnet-client[dataframe]``.
     Tries polars as the backend first; falls back to pandas.
 
     Args:
@@ -204,7 +204,7 @@ def table_to_frame(
         import narwhals as nw
     except ImportError:
         raise ImportError(
-            "narwhals is required; install with: pip install reportnet[dataframe]"
+            "narwhals is required; install with: pip install reportnet-client[dataframe]"
         ) from None
 
     dtype_map = _nw_dtype_map()
@@ -230,7 +230,7 @@ def table_to_frame(
         pass
 
     raise ImportError(
-        "polars or pandas is required; install with: pip install reportnet[dataframe]"
+        "polars or pandas is required; install with: pip install reportnet-client[dataframe]"
     )
 
 
@@ -273,7 +273,7 @@ def cast_frame(
         import narwhals as nw
     except ImportError:
         raise ImportError(
-            "narwhals is required; install with: pip install reportnet[dataframe]"
+            "narwhals is required; install with: pip install reportnet-client[dataframe]"
         ) from None
 
     dtype_map = _nw_dtype_map()

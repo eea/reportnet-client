@@ -53,7 +53,9 @@ nav:
   - API Reference:
     - ReportnetClient: api/client.md
     - DataflowClient: api/dataflow-client.md
+    - Jobs: api/jobs.md
     - Models: api/models.md
     - Exceptions: api/exceptions.md
     - Provider helpers: api/providers.md
     - Key storage: api/keychain.md
+    - Interactive & visualisation: api/interactive.md

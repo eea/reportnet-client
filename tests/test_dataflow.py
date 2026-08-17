@@ -494,3 +494,55 @@ def test_to_mermaid_colors_provider_node_by_worst_status(mock_router, client):
     # Worst status across France's two tables is CORRECTION_REQUESTED -> orange fill
     assert "style p_56 fill:#FFD580" in mmd
     assert "1/2 FINAL" in mmd
+
+
+# ── get_dataflow_contents / request fan-out ───────────────────────────────────
+# get_dataflow, get_reporting_datasets, get_reference_datasets and
+# get_test_datasets all read GET /dataflow/v1/{id}. Fetching them one at a time
+# costs a round-trip each; get_dataflow_contents() gets all of it for one.
+
+def test_get_dataflow_contents_parses_everything_in_one_request(mock_router, client):
+    route = mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    contents = client.for_dataflow(1619).get_dataflow_contents()
+
+    assert route.call_count == 1
+    assert contents.info.name == "EU GHG Inventory"
+    assert len(contents.reporting_datasets) == 3
+    assert len(contents.reference_datasets) == 1
+    assert len(contents.test_datasets) == 2
+    assert contents.reporting_datasets[0].table_name == "Table1a"
+
+
+def test_to_mermaid_makes_a_single_request(mock_router, client):
+    """Regression: to_mermaid() used to GET /dataflow/v1/{id} three times."""
+    route = mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    client.for_dataflow(1619).to_mermaid(include_test=True)
+    assert route.call_count == 1
+
+
+def test_dataflow_contents_tolerates_missing_dataset_lists(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json={"id": 1619, "name": "bare"})
+    )
+    contents = client.for_dataflow(1619).get_dataflow_contents()
+    assert contents.reporting_datasets == ()
+    assert contents.reference_datasets == ()
+    assert contents.test_datasets == ()
+
+
+# ── is_big_dataflow caching ───────────────────────────────────────────────────
+
+def test_is_big_dataflow_is_cached_on_the_shared_client(mock_router, client):
+    route = mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json={"id": 1619, "bigData": True})
+    )
+    flow = client.for_dataflow(1619)
+    # Cache lives on ReportnetClient, so a second scoped client reuses it.
+    assert flow.is_big_dataflow() is True
+    assert flow.for_provider(17).is_big_dataflow() is True
+    assert client.is_big_dataflow(dataflow_id=1619) is True
+    assert route.call_count == 1

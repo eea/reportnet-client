@@ -4,7 +4,7 @@
 
 ```python
 flow = client.for_dataflow(1619)
-ie = flow.for_provider(42)   # reporter's provider_id
+ie = flow.for_provider(17)   # Ireland's provider_id
 
 handle = ie.import_file(
     dataset_id=93953,

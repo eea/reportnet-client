@@ -1,3 +1,17 @@
+"""The low-level client — one method per Reportnet API operation.
+
+Layering rule (see also :mod:`reportnet.dataflow`):
+
+* ``ReportnetClient`` owns every quirk that is a property of the *endpoint* —
+  URL shape, parameter names, response oddities, and API version selection.
+  Calling any method here directly is always correct.
+* ``DataflowClient`` owns only *scoping* — deciding which IDs get filled in
+  when the caller omits them.
+
+Endpoint knowledge therefore lives in exactly one place, and the two layers
+can never disagree about how to talk to the API.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,10 +19,11 @@ from typing import IO, TYPE_CHECKING, Any, Literal, Union
 
 from ._http import HttpSession
 from ._util import to_file_tuple
+from .jobs import JobHandle
 from .models import (
+    DataflowContents,
     DataflowInfo,
     DatasetSchema,
-    JobHandle,
     ReferenceDataset,
     Reporter,
     ReportingDataset,
@@ -31,6 +46,10 @@ class ReportnetClient:
         timeout: float = 30.0,
     ) -> None:
         self._http = HttpSession(api_key=api_key, base_url=base_url, timeout=timeout)
+        # bigData-ness is immutable for a given dataflow, so this is safe to keep
+        # for the lifetime of the client. Shared with DataflowClient, which
+        # delegates rather than keeping a second copy.
+        self._big_data_cache: dict[int, bool] = {}
 
     @classmethod
     def from_keyring(
@@ -99,10 +118,27 @@ class ReportnetClient:
 
     # ── Dataflow metadata ─────────────────────────────────────────────────────
 
+    def get_dataflow_contents(self, *, dataflow_id: int) -> DataflowContents:
+        """GET /dataflow/v1/{dataflowId} — the whole payload, parsed in one pass.
+
+        ``get_dataflow``, ``get_reporting_datasets``, ``get_reference_datasets``
+        and ``get_test_datasets`` each read this same endpoint, so calling them
+        individually costs one HTTP round-trip each. Use this when you need more
+        than one of them.
+
+        Example::
+
+            contents = client.get_dataflow_contents(dataflow_id=1619)
+            contents.info.name
+            contents.reporting_datasets
+        """
+        contents = DataflowContents.from_dict(self._http.get(f"/dataflow/v1/{dataflow_id}").json())
+        self._big_data_cache[dataflow_id] = contents.info.big_data
+        return contents
+
     def get_dataflow(self, *, dataflow_id: int) -> DataflowInfo:
         """GET /dataflow/v1/{dataflowId} — name, type, status of a dataflow."""
-        response = self._http.get(f"/dataflow/v1/{dataflow_id}")
-        return DataflowInfo.from_dict(response.json())
+        return self.get_dataflow_contents(dataflow_id=dataflow_id).info
 
     def get_reporters(self, *, dataflow_id: int) -> list[Reporter]:
         """GET /representative/v1/dataflow/{dataflowId} — countries/orgs reporting to a dataflow."""
@@ -115,9 +151,7 @@ class ReportnetClient:
         Each country (reporter) has one dataset per table schema defined in the dataflow.
         Filter by ``provider_id`` to get all datasets for a specific country.
         """
-        response = self._http.get(f"/dataflow/v1/{dataflow_id}")
-        raw = response.json().get("reportingDatasets") or []
-        return [ReportingDataset.from_dict(d) for d in raw]
+        return list(self.get_dataflow_contents(dataflow_id=dataflow_id).reporting_datasets)
 
     def get_reference_datasets(self, *, dataflow_id: int) -> list[ReferenceDataset]:
         """GET /dataflow/v1/{dataflowId} — all reference datasets for a dataflow.
@@ -125,9 +159,7 @@ class ReportnetClient:
         Reference datasets hold shared lookup data such as codelists.
         They are not tied to any specific reporter.
         """
-        response = self._http.get(f"/dataflow/v1/{dataflow_id}")
-        raw = response.json().get("referenceDatasets") or []
-        return [ReferenceDataset.from_dict(d) for d in raw]
+        return list(self.get_dataflow_contents(dataflow_id=dataflow_id).reference_datasets)
 
     def get_test_datasets(self, *, dataflow_id: int) -> list[TestDataset]:
         """GET /dataflow/v1/{dataflowId} — all test datasets for a dataflow.
@@ -135,9 +167,7 @@ class ReportnetClient:
         Test datasets mirror the reporting schema and are used by custodians
         to verify validation rules before the reporting period opens.
         """
-        response = self._http.get(f"/dataflow/v1/{dataflow_id}")
-        raw = response.json().get("testDatasets") or []
-        return [TestDataset.from_dict(d) for d in raw]
+        return list(self.get_dataflow_contents(dataflow_id=dataflow_id).test_datasets)
 
     def is_big_dataflow(self, *, dataflow_id: int) -> bool:
         """Return True if *dataflow_id* is a BigData (DLT2) dataflow.
@@ -146,8 +176,13 @@ class ReportnetClient:
         dedicated GET /dataflow/private/v1/{dataflowId}/isBigDataflow endpoint
         looks purpose-built for this but 404s for API-key auth regardless of
         the dataflow's actual BigData status, so it isn't used here.
+
+        Cached per client — a dataflow never changes backend.
         """
-        return self.get_dataflow(dataflow_id=dataflow_id).big_data
+        cached = self._big_data_cache.get(dataflow_id)
+        if cached is None:
+            cached = self.get_dataflow_contents(dataflow_id=dataflow_id).info.big_data
+        return cached
 
     def close(self) -> None:
         self._http.close()
@@ -221,16 +256,24 @@ class ReportnetClient:
         data_provider_codes: str | None = None,
         table_schema_id: str | None = None,
         include_attachments: bool = False,
-        version: int = 4,
+        version: int | None = None,
     ) -> JobHandle:
         """GET /dataset/v{version}/etlExport/{datasetId} — async export.
 
-        v4 (BigData/DLT2, recommended): result is a ZIP of CSVs.
+        v4 (BigData/DLT2): result is a ZIP of CSVs.
         v5 (analytics, opt-in): result is a ZIP of Parquet files — same shape
         as v4, smaller and faster to load; never selected automatically, pass
         ``version=5`` explicitly.
         v3 (Citus): result is JSON; requires ``data_provider_codes`` (ISO country code).
+
+        When *version* is ``None`` (the default), v3 vs v4 is chosen for you
+        from the dataflow's backend via :meth:`is_big_dataflow` — sending the
+        wrong version mostly "succeeds" but returns a differently-shaped
+        payload, so guessing is worse than one extra lookup. The result is
+        cached per client; pass *version* explicitly to skip the lookup.
         """
+        if version is None:
+            version = 4 if self.is_big_dataflow(dataflow_id=dataflow_id) else 3
         params: dict[str, object] = {
             "dataflowId": dataflow_id,
             "includeAttachments": str(include_attachments).lower(),
@@ -497,64 +540,3 @@ def _extract_job_id(polling_url: str) -> int:
     # /orchestrator/jobs/pollForJobStatus/{jobId}?datasetId=...
     path = polling_url.split("?")[0]
     return int(path.rstrip("/").rsplit("/", 1)[-1])
-
-
-def connect_interactive(
-    dataflow_id: int,
-    *,
-    sandbox: bool = False,
-    country_code: str | None = None,
-) -> tuple[DataflowClient | None, str | None]:
-    """Connect for interactive/notebook use, returning a UI-ready result.
-
-    Loads the API key from the system keychain and builds a
-    :class:`DataflowClient` scoped to *dataflow_id*. When *country_code* is
-    given, further scopes it to that reporter via
-    :meth:`DataflowClient.find_reporter`. When *country_code* is omitted,
-    validates the key with a single :meth:`DataflowClient.ping` call instead
-    (there's no specific reporter to resolve).
-
-    This exists mainly to back the "Connect" cell shared by the example
-    marimo notebooks under ``notebooks/`` — see there for usage — but is
-    generally useful for any interactive tool that wants a one-call,
-    non-raising connect step.
-
-    Args:
-        dataflow_id: The dataflow to connect to.
-        sandbox: Use the sandbox environment and sandbox key.
-        country_code: ISO 3166-1 alpha-2 code to scope to a specific reporter.
-
-    Returns:
-        ``(flow, error_message)``. On success, ``error_message`` is
-        ``None``. On failure, ``flow`` is ``None`` and ``error_message`` is
-        a short, human-readable string safe to show directly in a UI
-        callout.
-
-    Example::
-
-        flow, error = reportnet.connect_interactive(1619, country_code="IE")
-        if error:
-            mo.callout(mo.md(error), kind="danger")
-        else:
-            mo.callout(mo.md(f"Connected — provider_id={flow._provider_id}"), kind="success")
-    """
-    from .exceptions import AuthError
-
-    try:
-        client = ReportnetClient.from_keyring(dataflow_id, sandbox=sandbox)
-        flow = client.for_dataflow(dataflow_id)
-        if country_code:
-            return flow.find_reporter(country_code), None
-        if not flow.ping():
-            return None, "API key is invalid or has been revoked."
-        return flow, None
-    except KeyError:
-        env = "sandbox" if sandbox else "production"
-        return None, (
-            f"No {env} API key found for dataflow {dataflow_id}. "
-            "Expand *Save API key* above to store your key."
-        )
-    except ValueError as exc:
-        return None, f"Country lookup failed: {exc}"
-    except AuthError:
-        return None, "API key is invalid or has been revoked."

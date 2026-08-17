@@ -1,5 +1,8 @@
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
+
 from ._util import cast_frame, table_to_frame, to_geodataframe
-from .client import PRODUCTION_URL, SANDBOX_URL, ReportnetClient, connect_interactive
+from .client import PRODUCTION_URL, SANDBOX_URL, ReportnetClient
 from .dataflow import DataflowClient
 from .exceptions import (
     APIError,
@@ -10,14 +13,15 @@ from .exceptions import (
     RateLimitError,
     ReportnetError,
 )
+from .interactive import connect_interactive
+from .jobs import JobHandle, JobStatus
 from .keychain import delete_key, get_key, save_key
 from .models import (
+    DataflowContents,
     DataflowInfo,
     DatasetSchema,
     FieldSchema,
     FieldType,
-    JobHandle,
-    JobStatus,
     ReferenceDataset,
     Reporter,
     ReportingDataset,
@@ -27,15 +31,24 @@ from .models import (
     ValidationResult,
 )
 from .providers import PROVIDERS, DataProvider, by_country, by_group, by_id
+from .viz import dataflow_to_mermaid
+
+try:
+    __version__ = _version("reportnet-client")
+except PackageNotFoundError:  # pragma: no cover - running from a source tree
+    __version__ = "0.0.0.dev0"
 
 __all__ = [
+    "__version__",
     "PRODUCTION_URL",
     "SANDBOX_URL",
     "ReportnetClient",
     "DataflowClient",
     "connect_interactive",
+    "dataflow_to_mermaid",
     "JobHandle",
     "JobStatus",
+    "DataflowContents",
     "DataflowInfo",
     "Reporter",
     "ReportingDataset",

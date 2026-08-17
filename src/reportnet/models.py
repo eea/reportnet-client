@@ -1,18 +1,42 @@
+"""Data models for Reportnet API responses.
+
+These are plain frozen dataclasses that parse JSON payloads — they perform no
+network I/O.  The asynchronous job machinery (:class:`~reportnet.JobHandle`,
+:class:`~reportnet.JobStatus`) lives in :mod:`reportnet.jobs` because it holds
+a live HTTP session; it is re-exported here for backwards compatibility.
+"""
+
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
-from ._http import HttpSession
-from .exceptions import JobFailedError, JobTimeoutError
+# Re-exported for backwards compatibility with `from reportnet.models import JobHandle`.
+from .jobs import JobHandle, JobStatus
 
 if TYPE_CHECKING:
     import pandas  # type: ignore[import-untyped]
     import polars
 
     NativeFrame: TypeAlias = polars.DataFrame | pandas.DataFrame
+
+__all__ = [
+    "DataflowInfo",
+    "DataflowContents",
+    "Reporter",
+    "ReportingDataset",
+    "ReferenceDataset",
+    "TestDataset",
+    "FieldType",
+    "FieldSchema",
+    "TableSchema",
+    "DatasetSchema",
+    "ValidationIssue",
+    "ValidationResult",
+    "JobHandle",
+    "JobStatus",
+]
 
 # ── Dataflow models ───────────────────────────────────────────────────────────
 
@@ -157,6 +181,42 @@ class TestDataset:
         )
 
 
+@dataclass(frozen=True)
+class DataflowContents:
+    """Everything GET /dataflow/v1/{dataflowId} returns, parsed in one pass.
+
+    ``get_dataflow``, ``get_reporting_datasets``, ``get_reference_datasets``,
+    ``get_test_datasets`` and ``is_big_dataflow`` all read the *same* endpoint.
+    Calling them individually costs one HTTP round-trip each; fetching a
+    ``DataflowContents`` gets all of it for one.
+
+    Example::
+
+        contents = flow.get_dataflow_contents()
+        print(contents.info.name, contents.info.big_data)
+        for ds in contents.reporting_datasets:
+            print(ds.country_code, ds.table_name, ds.id)
+    """
+
+    info: DataflowInfo
+    reporting_datasets: tuple[ReportingDataset, ...]
+    reference_datasets: tuple[ReferenceDataset, ...]
+    test_datasets: tuple[TestDataset, ...]
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "DataflowContents":
+        return cls(
+            info=DataflowInfo.from_dict(d),
+            reporting_datasets=tuple(
+                ReportingDataset.from_dict(x) for x in d.get("reportingDatasets") or []
+            ),
+            reference_datasets=tuple(
+                ReferenceDataset.from_dict(x) for x in d.get("referenceDatasets") or []
+            ),
+            test_datasets=tuple(TestDataset.from_dict(x) for x in d.get("testDatasets") or []),
+        )
+
+
 # ── Schema models ─────────────────────────────────────────────────────────────
 
 class FieldType(str, Enum):
@@ -270,7 +330,7 @@ class TableSchema:
             import narwhals as nw
         except ImportError:
             raise ImportError(
-                "narwhals is required; install with: pip install reportnet[dataframe]"
+                "narwhals is required; install with: pip install reportnet-client[dataframe]"
             ) from None
 
         nwf = nw.from_native(frame, eager_only=True)  # type: ignore[call-overload]
@@ -344,7 +404,7 @@ class TableSchema:
                 columns use ``pl.Enum`` (polars) or ``CategoricalDtype`` (pandas)
                 instead of plain strings.
 
-        Requires ``pip install reportnet[dataframe]``.
+        Requires ``pip install reportnet-client[dataframe]``.
         Returns a ``polars.DataFrame`` if polars is installed, else ``pandas.DataFrame``.
 
         Example::
@@ -388,7 +448,7 @@ class DatasetSchema:
                 :meth:`DataflowClient.get_codelists`).  When provided, LINK
                 columns use ``pl.Enum`` / ``CategoricalDtype`` instead of strings.
 
-        Requires ``pip install reportnet[dataframe]``.
+        Requires ``pip install reportnet-client[dataframe]``.
 
         Example::
 
@@ -469,7 +529,7 @@ class ValidationResult:
             import narwhals as nw
         except ImportError:
             raise ImportError(
-                "narwhals is required; install with: pip install reportnet[dataframe]"
+                "narwhals is required; install with: pip install reportnet-client[dataframe]"
             ) from None
 
         data: dict[str, list[Any]] = {
@@ -495,7 +555,7 @@ class ValidationResult:
             pass
 
         raise ImportError(
-            "polars or pandas required; install with: pip install reportnet[dataframe]"
+            "polars or pandas required; install with: pip install reportnet-client[dataframe]"
         )
 
     @classmethod
@@ -545,102 +605,3 @@ class ValidationResult:
         return cls(dataset_id=dataset_id, issues=issues, raw=raw)
 
 
-class JobStatus(str, Enum):
-    QUEUED = "QUEUED"
-    IN_PROGRESS = "IN_PROGRESS"
-    REFUSED = "REFUSED"
-    CANCELED = "CANCELED"
-    FAILED = "FAILED"
-    FINISHED = "FINISHED"
-    CANCELED_BY_ADMIN = "CANCELED_BY_ADMIN"
-
-    @property
-    def is_terminal(self) -> bool:
-        return self not in (JobStatus.QUEUED, JobStatus.IN_PROGRESS)
-
-    @property
-    def is_successful(self) -> bool:
-        return self == JobStatus.FINISHED
-
-
-@dataclass
-class JobHandle:
-    job_id: int
-    polling_url: str
-    _http: HttpSession = field(repr=False)
-    _is_export: bool = field(default=False, repr=False)
-    _download_url: str | None = field(default=None, repr=False)
-    # Reporters must include providerId when polling; stored here so _poll() can inject it.
-    _provider_id: int | None = field(default=None, repr=False)
-
-    def _poll(self) -> dict[str, object]:
-        url = self.polling_url
-        if self._provider_id is not None and "providerId" not in url:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}providerId={self._provider_id}"
-        data: dict[str, object] = self._http.get(url).json()
-        if download_url := data.get("downloadUrl"):
-            self._download_url = str(download_url)
-        return data
-
-    def status(self) -> JobStatus:
-        return JobStatus(self._poll()["status"])
-
-    def wait(
-        self,
-        *,
-        poll_interval: float = 5.0,
-        timeout: float | None = None,
-        on_status: Callable[[JobStatus], None] | None = None,
-    ) -> "JobHandle":
-        deadline = time.monotonic() + timeout if timeout is not None else None
-        while True:
-            data = self._poll()
-            current = JobStatus(data["status"])
-            if on_status is not None:
-                on_status(current)
-            if current.is_terminal:
-                if not current.is_successful:
-                    raise JobFailedError(self.job_id, current.value)
-                return self
-            if deadline is not None and time.monotonic() >= deadline:
-                raise JobTimeoutError(self.job_id)
-            time.sleep(poll_interval)
-
-    def result(
-        self,
-        *,
-        poll_interval: float = 5.0,
-        timeout: float | None = None,
-        on_status: Callable[[JobStatus], None] | None = None,
-    ) -> bytes:
-        if not self._is_export:
-            raise TypeError(
-                "result() is only valid on export handles (returned by etl_export, "
-                "export_file, export_file_dl, export_dataset_file, or export_dataset_file_dl)"
-            )
-        self.wait(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
-        if self._download_url is None:
-            raise RuntimeError("Export FINISHED but poll response contained no downloadUrl")
-        return self._http.get(self._download_url).content
-
-    def to_frames(
-        self,
-        *,
-        poll_interval: float = 5.0,
-        timeout: float | None = None,
-        on_status: Callable[[JobStatus], None] | None = None,
-    ) -> dict[str, Any]:
-        """Wait for an export job and return its tables as DataFrames.
-
-        Supports CSV (v4), Parquet (v5), and JSON (v3) export formats —
-        see :func:`~reportnet._util.zip_to_frames`.
-
-        Returns a dict keyed by table name (filename without extension).
-        Requires polars or pandas (``pip install reportnet[dataframe]``).
-        """
-        from ._util import zip_to_frames
-
-        return zip_to_frames(
-            self.result(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
-        )

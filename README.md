@@ -2,12 +2,16 @@
 
 [![Tests](https://github.com/eea/reportnet-client/actions/workflows/tests.yml/badge.svg)](https://github.com/eea/reportnet-client/actions/workflows/tests.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![Licence: EUPL-1.2](https://img.shields.io/badge/licence-EUPL--1.2-blue)](LICENSE)
 
 > **Beta** — the client may change and requires more testing before version 1.0.
 
 Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.eu/rest-api/).
 
 **[Full documentation](https://eea.github.io/reportnet-client/)**
+
+The package is fully type-annotated and ships a [PEP 561](https://peps.python.org/pep-0561/)
+marker, so `mypy` and `pyright` type-check your calls against it out of the box.
 
 ## Contents
 
@@ -31,6 +35,7 @@ Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.e
 - [Error handling](#error-handling)
 - [Development](#development)
 - [Interactive notebooks](#interactive-notebooks)
+- [Licence](#licence)
 
 ## Installation
 
@@ -285,6 +290,8 @@ xlsx_bytes = handle.result()
 
 `etl_export` automatically picks the correct API version for the dataflow backend:
 v4 (ZIP of CSVs) for BigData/DLT2 dataflows, v3 (ZIP containing JSON) for Citus dataflows.
+This applies to both `ReportnetClient` and `DataflowClient` — the selection costs one
+`bigData` lookup, cached per client. Pass `version=` explicitly to skip it.
 
 For analytics workflows, pass `version=5` to get a ZIP of Parquet files instead —
 same shape as v4, smaller and faster to load. It's opt-in only (never auto-selected);
@@ -398,7 +405,24 @@ all_datasets = flow.get_reporting_datasets()  # all countries
 ie = flow.find_reporter("IE")
 
 # Or by numeric provider_id (if you already know it)
-ie = flow.for_provider(42)
+ie = flow.for_provider(17)
+```
+
+### Fetch everything in one request
+
+`get_dataflow()`, `get_reporting_datasets()`, `get_reference_datasets()` and
+`get_test_datasets()` all read the same `/dataflow/v1/{id}` endpoint, so calling
+them one after another costs a round-trip each. When you need more than one,
+use `get_dataflow_contents()`:
+
+```python
+contents = flow.get_dataflow_contents()   # a single HTTP request
+
+contents.info.name              # "EU GHG Inventory"
+contents.info.big_data          # True for BigData (DLT2) dataflows
+contents.reporting_datasets     # every reporter's datasets (unfiltered)
+contents.reference_datasets
+contents.test_datasets
 ```
 
 ## Job polling
@@ -536,3 +560,9 @@ uv run marimo export html notebooks/01_explore_dataflow.py -o docs/notebook_prev
 The exported file can be committed and served via GitHub Pages as a static preview — useful for
 sharing with colleagues who don't have Python installed. The preview is read-only (no live API
 calls), but shows the notebook layout and all markdown documentation.
+
+## Licence
+
+Licensed under the [European Union Public Licence v1.2](LICENSE) (EUPL-1.2).
+
+Copyright © European Environment Agency.

@@ -45,7 +45,7 @@ def test_etl_export_returns_handle(mock_router, client):
     mock_router.get("/dataset/v4/etlExport/1").mock(
         return_value=httpx.Response(200, json=EXPORT_RESPONSE)
     )
-    handle = client.etl_export(dataset_id=1, dataflow_id=2)
+    handle = client.etl_export(dataset_id=1, dataflow_id=2, version=4)
     assert isinstance(handle, JobHandle)
     assert handle.job_id == 200
     assert handle._is_export is True
@@ -58,7 +58,7 @@ def test_etl_export_job_id_from_response(mock_router, client):
             200, json={"jobId": 999, "pollingUrl": POLLING_URL, "status": "QUEUED"}
         )
     )
-    handle = client.etl_export(dataset_id=1, dataflow_id=2)
+    handle = client.etl_export(dataset_id=1, dataflow_id=2, version=4)
     assert handle.job_id == 999
 
 
@@ -84,7 +84,7 @@ def test_result_waits_and_downloads(mock_router, client):
     mock_router.get("/orchestrator/jobs/downloadEtlExportedFile/200").mock(
         return_value=httpx.Response(200, content=b"PK\x03\x04zipdata")
     )
-    handle = client.etl_export(dataset_id=1, dataflow_id=2)
+    handle = client.etl_export(dataset_id=1, dataflow_id=2, version=4)
     with patch("time.sleep"):
         data = handle.result(poll_interval=0)
     assert data == b"PK\x03\x04zipdata"
@@ -146,7 +146,7 @@ def test_to_frames_returns_dict_of_dataframes(mock_router, client):
     mock_router.get("/orchestrator/jobs/downloadEtlExportedFile/200").mock(
         return_value=httpx.Response(200, content=zip_bytes)
     )
-    handle = client.etl_export(dataset_id=1, dataflow_id=2)
+    handle = client.etl_export(dataset_id=1, dataflow_id=2, version=4)
     with patch("time.sleep"):
         frames = handle.to_frames(poll_interval=0)
     assert set(frames) == {"Emissions", "Sites"}
@@ -166,7 +166,7 @@ def test_to_frames_strips_path_prefix(mock_router, client):
     mock_router.get("/orchestrator/jobs/downloadEtlExportedFile/200").mock(
         return_value=httpx.Response(200, content=zip_bytes)
     )
-    handle = client.etl_export(dataset_id=1, dataflow_id=2)
+    handle = client.etl_export(dataset_id=1, dataflow_id=2, version=4)
     with patch("time.sleep"):
         frames = handle.to_frames(poll_interval=0)
     assert list(frames) == ["MyTable"]
@@ -312,3 +312,54 @@ def test_download_validation_snapshot(mock_router, client):
         snapshot_id=42, dataset_id=1, dataflow_id=2, provider_id=17
     )
     assert result == b"rule,count\nerror,5"
+
+
+# ── etl_export version auto-detection ─────────────────────────────────────────
+# Version selection is an endpoint quirk, so it lives on ReportnetClient and
+# both client layers inherit identical behaviour. Sending the wrong version
+# mostly "succeeds" but returns a differently-shaped payload, so the default is
+# to look the backend up rather than guess.
+
+def test_etl_export_auto_detects_v4_for_bigdata(mock_router, client):
+    mock_router.get("/dataflow/v1/2").mock(
+        return_value=httpx.Response(200, json={"id": 2, "bigData": True})
+    )
+    route = mock_router.get("/dataset/v4/etlExport/1").mock(
+        return_value=httpx.Response(200, json=EXPORT_RESPONSE)
+    )
+    client.etl_export(dataset_id=1, dataflow_id=2)
+    assert route.call_count == 1
+
+
+def test_etl_export_auto_detects_v3_for_citus(mock_router, client):
+    mock_router.get("/dataflow/v1/2").mock(
+        return_value=httpx.Response(200, json={"id": 2, "bigData": False})
+    )
+    route = mock_router.get("/dataset/v3/etlExport/1").mock(
+        return_value=httpx.Response(200, json=EXPORT_RESPONSE)
+    )
+    client.etl_export(dataset_id=1, dataflow_id=2)
+    assert route.call_count == 1
+
+
+def test_etl_export_explicit_version_skips_the_lookup(mock_router, client):
+    lookup = mock_router.get("/dataflow/v1/2").mock(
+        return_value=httpx.Response(200, json={"id": 2, "bigData": False})
+    )
+    mock_router.get("/dataset/v4/etlExport/1").mock(
+        return_value=httpx.Response(200, json=EXPORT_RESPONSE)
+    )
+    client.etl_export(dataset_id=1, dataflow_id=2, version=4)
+    assert lookup.call_count == 0
+
+
+def test_etl_export_detection_is_cached_across_calls(mock_router, client):
+    lookup = mock_router.get("/dataflow/v1/2").mock(
+        return_value=httpx.Response(200, json={"id": 2, "bigData": True})
+    )
+    mock_router.get("/dataset/v4/etlExport/1").mock(
+        return_value=httpx.Response(200, json=EXPORT_RESPONSE)
+    )
+    client.etl_export(dataset_id=1, dataflow_id=2)
+    client.etl_export(dataset_id=1, dataflow_id=2)
+    assert lookup.call_count == 1
