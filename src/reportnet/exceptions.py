@@ -26,6 +26,28 @@ class DatasetLockedError(APIError):
     pass
 
 
+class CodelistResolutionError(ReportnetError):
+    """Raised when LINK/CODELIST fields could not be resolved to valid values.
+
+    Only raised when ``strict=True`` is passed to
+    :meth:`~reportnet.DataflowClient.get_codelists` or
+    :meth:`~reportnet.DataflowClient.get_template`. By default, unresolved
+    fields are logged and warned about, and the affected columns fall back to
+    plain strings.
+
+    Attributes:
+        unresolved: Names of the fields that could not be resolved.
+    """
+
+    def __init__(self, unresolved: list[str], detail: str = "") -> None:
+        self.unresolved = unresolved
+        message = (
+            f"Could not resolve valid values for {len(unresolved)} field(s): "
+            f"{sorted(unresolved)}"
+        )
+        super().__init__(f"{message}. {detail}".strip())
+
+
 class JobFailedError(ReportnetError):
     def __init__(self, job_id: int, status: str) -> None:
         self.job_id = job_id

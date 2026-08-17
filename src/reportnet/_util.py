@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, TypeAlias, Union
 
@@ -310,11 +311,64 @@ def cast_frame(
     return nw.to_native(nwf)
 
 
+@dataclass(frozen=True)
+class CodelistResolution:
+    """Outcome of resolving LINK/CODELIST fields against a reference dataset.
+
+    Carries not just the values but *what could not be resolved*, so callers
+    can tell a complete answer from a partial one. Silently returning a partial
+    mapping is the dangerous case: the resulting template looks identical to a
+    good one but enforces nothing.
+    """
+
+    values: dict[str, list[str]]
+    resolved: tuple[str, ...]
+    unresolved: tuple[str, ...]
+
+    @property
+    def is_complete(self) -> bool:
+        return not self.unresolved
+
+    def summary(self) -> str:
+        total = len(self.resolved) + len(self.unresolved)
+        if total == 0:
+            return "no LINK/CODELIST fields in this dataset"
+        text = f"resolved {len(self.resolved)}/{total} LINK/CODELIST field(s)"
+        if self.unresolved:
+            text += f"; unresolved: {sorted(self.unresolved)}"
+        return text
+
+
+def linked_field_names(reporting_schema: Any) -> list[str]:
+    """Names of every field in *reporting_schema* that references another dataset."""
+    return [
+        f.name
+        for table in reporting_schema.tables
+        for f in table.fields
+        if f.referenced_pk_id
+    ]
+
+
+def reference_coverage(reporting_schema: Any, ref_schema: Any) -> int:
+    """How many of *reporting_schema*'s LINK fields *ref_schema* can satisfy.
+
+    Uses schema IDs only — no data export — so this is cheap enough to run
+    against every reference dataset in a dataflow to find the right one.
+    """
+    pk_ids = {f.id for table in ref_schema.tables for f in table.fields}
+    return sum(
+        1
+        for table in reporting_schema.tables
+        for f in table.fields
+        if f.referenced_pk_id and f.referenced_pk_id in pk_ids
+    )
+
+
 def build_codelists(
     reporting_schema: Any,
     ref_schema: Any,
     ref_frames: dict[str, Any],
-) -> dict[str, list[str]]:
+) -> CodelistResolution:
     """Map each LINK field in *reporting_schema* to its valid values.
 
     Looks up each LINK field's ``referenced_pk_id`` in *ref_schema* to find
@@ -328,9 +382,8 @@ def build_codelists(
             reference dataset (keyed by table name).
 
     Returns:
-        A dict mapping field name → sorted list of valid string values.
-        Only LINK fields whose ``referenced_pk_id`` matches a field in *ref_schema*
-        are included.
+        A :class:`CodelistResolution` reporting both the resolved values and
+        the fields that could not be resolved.
     """
     # Build map: field schema ID → (table_name, column_name) in the reference dataset
     pk_map: dict[str, tuple[str, str]] = {}
@@ -341,22 +394,31 @@ def build_codelists(
     import narwhals as nw
 
     codelists: dict[str, list[str]] = {}
+    unresolved: list[str] = []
     for table in reporting_schema.tables:
         for f in table.fields:
             if not f.referenced_pk_id:
                 continue
             location = pk_map.get(f.referenced_pk_id)
             if location is None:
+                # The referenced PK lives in a different reference dataset.
+                unresolved.append(f.name)
                 continue
             ref_table_name, ref_col_name = location
             frame = ref_frames.get(ref_table_name)
             if frame is None:
+                # Schema says the table exists, but the export didn't contain it.
+                unresolved.append(f.name)
                 continue
             col = nw.from_native(frame, eager_only=True)[ref_col_name]
             values: list[Any] = col.drop_nulls().unique().sort().to_list()
             codelists[f.name] = [str(v) for v in values]
 
-    return codelists
+    return CodelistResolution(
+        values=codelists,
+        resolved=tuple(codelists),
+        unresolved=tuple(dict.fromkeys(unresolved)),
+    )
 
 
 def to_geodataframe(

@@ -653,3 +653,160 @@ def test_to_mermaid_include_test(df_1619):
     mmd = df_1619.to_mermaid(include_test=True)
     assert "graph LR" in mmd
     print(f"\n  Mermaid with test datasets: {len(mmd)} chars")
+
+
+# ── Reference-dataset selection, coverage reporting, name lookup, logging ──────
+# These cover the reliability work: get_template() used to blindly take refs[0],
+# which is wrong on dataflow 2003 (the codelists are NOT the first reference
+# dataset). All read-only — no imports, no deletes.
+
+@pytest.mark.integration
+def test_reference_dataset_selection_beats_refs_zero(df_2003):
+    """The schema-based picker must choose a reference dataset that actually
+    covers the reporting dataset's LINK fields — which on this dataflow is not
+    refs[0]. Schema-only, so no export jobs are started."""
+    from reportnet._util import linked_field_names, reference_coverage
+
+    reporters = df_2003.get_reporters()
+    scoped = df_2003.for_provider(reporters[0].provider_id)
+    datasets = scoped.get_reporting_datasets()
+    assert datasets, "no reporting datasets for this provider"
+
+    refs = df_2003.get_reference_datasets()
+    if not refs:
+        pytest.skip("dataflow has no reference datasets")
+
+    # Find a dataset that actually has LINK fields to resolve.
+    target = None
+    for ds in datasets:
+        schema = scoped.get_schema(dataset_id=ds.id)
+        if linked_field_names(schema):
+            target = (ds, schema)
+            break
+    if target is None:
+        pytest.skip("no LINK/CODELIST fields in this provider's datasets")
+    ds, schema = target
+
+    linked = linked_field_names(schema)
+    coverage = {}
+    for ref in refs:
+        try:
+            coverage[ref.id] = reference_coverage(schema, scoped.get_schema(dataset_id=ref.id))
+        except reportnet.ReportnetError as exc:
+            print(f"    ref {ref.id}: schema unreadable ({exc})")
+
+    print(f"\n  dataset {ds.id} ({ds.table_name}) has {len(linked)} LINK field(s)")
+    for ref in refs:
+        print(f"    ref {ref.id:>6}  {ref.name[:45]:<45} covers {coverage.get(ref.id, '?')}")
+
+    chosen = scoped._best_reference_dataset(schema, refs)
+    assert chosen is not None, f"no reference dataset covers {linked}"
+    assert coverage[chosen.id] == max(coverage.values())
+    print(f"  -> selected {chosen.id} ({chosen.name}), covering {coverage[chosen.id]}")
+
+    # The whole point: blindly taking refs[0] would have been worse here.
+    if coverage.get(refs[0].id, 0) < coverage[chosen.id]:
+        print(f"  refs[0] would have covered only {coverage.get(refs[0].id, 0)} — "
+              f"this is the bug the picker fixes")
+
+
+@pytest.mark.integration
+def test_get_template_reports_coverage_and_types_link_columns(df_2003):
+    """End-to-end on real data: get_template() should either produce Enum
+    columns or warn — never silently hand back unconstrained strings."""
+    import warnings
+
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet._util import linked_field_names
+
+    reporters = df_2003.get_reporters()
+    scoped = df_2003.for_provider(reporters[0].provider_id)
+    datasets = scoped.get_reporting_datasets()
+
+    target = None
+    for ds in datasets:
+        if linked_field_names(scoped.get_schema(dataset_id=ds.id)):
+            target = ds
+            break
+    if target is None:
+        pytest.skip("no LINK/CODELIST fields in this provider's datasets")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        templates = scoped.get_template(dataset_id=target.id, poll_interval=5.0, timeout=600.0)
+
+    linked = set(linked_field_names(scoped.get_schema(dataset_id=target.id)))
+    enum_cols, string_cols = [], []
+    for name, frame in templates.items():
+        for col, dtype in frame.schema.items():
+            if col in linked:
+                (enum_cols if isinstance(dtype, pl.Enum) else string_cols).append(f"{name}.{col}")
+
+    print(f"\n  dataset {target.id} ({target.table_name})")
+    print(f"    Enum-typed LINK columns:   {enum_cols}")
+    print(f"    plain-string LINK columns: {string_cols}")
+    for w in caught:
+        print(f"    warning: {w.message}")
+
+    # The contract: any LINK column left unconstrained must have been warned about.
+    if string_cols:
+        assert caught, f"{string_cols} fell back to plain strings with no warning"
+
+
+@pytest.mark.integration
+def test_dataset_lookup_by_table_name(df_2003):
+    """Name-based lookup should agree with positional access, without the guessing."""
+    reporters = df_2003.get_reporters()
+    scoped = df_2003.for_provider(reporters[0].provider_id)
+    datasets = scoped.get_reporting_datasets()
+    assert datasets, "no reporting datasets for this provider"
+
+    by_table = scoped.datasets_by_table()
+    print(f"\n  {len(by_table)} table(s): {sorted(by_table)}")
+
+    first = datasets[0]
+    assert scoped.dataset(first.table_name).id == first.id
+    assert scoped.dataset(first.table_name.lower()).id == first.id
+
+    with pytest.raises(KeyError) as excinfo:
+        scoped.dataset("DefinitelyNotATable")
+    assert first.table_name in str(excinfo.value)
+
+
+@pytest.mark.integration
+def test_reference_dataset_lookup_by_name(df_2003):
+    refs = df_2003.get_reference_datasets()
+    if not refs:
+        pytest.skip("dataflow has no reference datasets")
+    print(f"\n  reference datasets: {[r.name for r in refs]}")
+    assert df_2003.reference_dataset(refs[0].name).id == refs[0].id
+
+
+@pytest.mark.integration
+def test_get_dataflow_contents_is_one_request(df_2003, caplog):
+    """All four getters read the same endpoint; contents must fetch it once."""
+    import logging as _logging
+
+    with caplog.at_level(_logging.DEBUG, logger="reportnet"):
+        contents = df_2003.get_dataflow_contents()
+
+    requests = [r.getMessage() for r in caplog.records if "/dataflow/v1/" in r.getMessage()]
+    # One debug line for the request, one for the response.
+    assert len([r for r in requests if "->" not in r]) == 1, requests
+    print(f"\n  {contents.info.name}: {len(contents.reporting_datasets)} reporting, "
+          f"{len(contents.reference_datasets)} reference, "
+          f"{len(contents.test_datasets)} test dataset(s)")
+
+
+@pytest.mark.integration
+def test_live_requests_are_logged(df_2003, caplog):
+    import logging as _logging
+
+    with caplog.at_level(_logging.DEBUG, logger="reportnet"):
+        df_2003.get_dataflow()
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("GET ") for m in messages), messages
+    assert not any("ApiKey" in m for m in messages), "API key must never be logged"

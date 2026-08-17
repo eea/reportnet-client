@@ -9,9 +9,12 @@ never disagree about how to talk to the API.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, Literal, Union
 
+from ._log import get_logger
+from .exceptions import CodelistResolutionError, ReportnetError
 from .jobs import JobHandle, JobStatus
 from .models import (
     DataflowContents,
@@ -25,7 +28,10 @@ from .models import (
 )
 
 if TYPE_CHECKING:
+    from ._util import CodelistResolution
     from .client import ReportnetClient
+
+logger = get_logger(__name__)
 
 
 class DataflowClient:
@@ -201,6 +207,94 @@ class DataflowClient:
         if self._provider_id is not None:
             return [ds for ds in all_ds if ds.provider_id == self._provider_id]
         return all_ds
+
+    def dataset(self, table_name: str) -> ReportingDataset:
+        """Return this reporter's reporting dataset for *table_name*.
+
+        Reportnet gives each reporter one dataset per table schema, so working
+        out "which dataset is Table1a" otherwise means eyeballing list
+        positions — `get_reporting_datasets()[1]` and hoping.
+
+        Requires a provider-scoped client (via :meth:`for_provider` or
+        :meth:`find_reporter`), since table names repeat across reporters.
+
+        Args:
+            table_name: The table name, e.g. ``"Table1a"``. Case-insensitive.
+
+        Returns:
+            The matching :class:`~reportnet.ReportingDataset`.
+
+        Raises:
+            ValueError: If the client is not scoped to a provider.
+            KeyError: If no table of that name exists (the message lists the
+                names that do).
+
+        Example::
+
+            ie = flow.find_reporter("IE")
+            ds = ie.dataset("Table1a")
+            ie.import_file(dataset_id=ds.id, file="ireland.csv")
+        """
+        if self._provider_id is None:
+            raise ValueError(
+                "dataset() needs a provider-scoped client, because every reporter has a "
+                "dataset with the same table name. Use for_provider(...) or "
+                "find_reporter(...) first, or call get_reporting_datasets() directly."
+            )
+        datasets = self.get_reporting_datasets()
+        wanted = table_name.casefold()
+        for ds in datasets:
+            if ds.table_name.casefold() == wanted:
+                return ds
+        raise KeyError(
+            f"No table named {table_name!r} for provider {self._provider_id}; "
+            f"available: {sorted(d.table_name for d in datasets)}"
+        )
+
+    def datasets_by_table(self) -> dict[str, ReportingDataset]:
+        """Return this reporter's reporting datasets keyed by table name.
+
+        Requires a provider-scoped client — see :meth:`dataset`.
+
+        Example::
+
+            datasets = ie.datasets_by_table()
+            # {"Table1a": ReportingDataset(id=93953, ...), "Table7": ...}
+        """
+        if self._provider_id is None:
+            raise ValueError(
+                "datasets_by_table() needs a provider-scoped client. "
+                "Use for_provider(...) or find_reporter(...) first."
+            )
+        return {ds.table_name: ds for ds in self.get_reporting_datasets()}
+
+    def reference_dataset(self, name: str) -> ReferenceDataset:
+        """Return the reference dataset whose name matches *name*.
+
+        Matches case-insensitively, exactly first and then as a substring, so
+        ``flow.reference_dataset("codelist")`` finds
+        ``"Reference Dataset - Codelist"``.
+
+        Raises:
+            KeyError: If no dataset matches, or if a substring match is
+                ambiguous (the message lists the candidates).
+        """
+        refs = self.get_reference_datasets()
+        wanted = name.casefold()
+        for ref in refs:
+            if ref.name.casefold() == wanted:
+                return ref
+        partial = [r for r in refs if wanted in r.name.casefold()]
+        if len(partial) == 1:
+            return partial[0]
+        if len(partial) > 1:
+            raise KeyError(
+                f"{name!r} matches {len(partial)} reference datasets: "
+                f"{sorted(r.name for r in partial)}. Use the full name."
+            )
+        raise KeyError(
+            f"No reference dataset matching {name!r}; available: {sorted(r.name for r in refs)}"
+        )
 
     def get_reference_datasets(self) -> list[ReferenceDataset]:
         """Return all reference datasets for this dataflow.
@@ -578,6 +672,7 @@ class DataflowClient:
         ref_dataset_id: int,
         poll_interval: float = 5.0,
         timeout: float | None = None,
+        strict: bool = False,
     ) -> dict[str, list[str]]:
         """Return valid values for all LINK fields in *dataset_id*.
 
@@ -585,14 +680,27 @@ class DataflowClient:
         field in the reporting dataset to the sorted list of valid values from
         the column it references.
 
+        A dataflow can have several reference datasets, and a LINK field is
+        only resolvable from the one that actually holds its lookup table. Any
+        field that could not be resolved is logged and warned about — a
+        partially-resolved mapping looks exactly like a complete one, and
+        silently produces templates that enforce nothing. Use *strict* to turn
+        that into an error, or :meth:`get_template`, which picks the right
+        reference dataset for you.
+
         Args:
             dataset_id: The reporting dataset whose LINK fields to resolve.
             ref_dataset_id: The reference dataset that holds the codelist data.
             poll_interval: Seconds between export polling calls.
             timeout: Maximum seconds to wait for the export job.
+            strict: Raise :class:`~reportnet.CodelistResolutionError` instead of
+                warning when some LINK fields cannot be resolved.
 
         Returns:
             A dict mapping field name → list of valid string values.
+
+        Raises:
+            CodelistResolutionError: If *strict* and any field is unresolved.
 
         Example::
 
@@ -605,14 +713,94 @@ class DataflowClient:
                 df.get_schema(dataset_id=93953).table("Table1a").to_frame(codelists=codelists)
             )
         """
+        resolution = self._resolve_codelists(
+            dataset_id=dataset_id,
+            ref_dataset_id=ref_dataset_id,
+            poll_interval=poll_interval,
+            timeout=timeout,
+        )
+        self._report_codelist_coverage(resolution, ref_dataset_id, strict=strict)
+        return resolution.values
+
+    def _resolve_codelists(
+        self,
+        *,
+        dataset_id: int,
+        ref_dataset_id: int,
+        poll_interval: float,
+        timeout: float | None,
+    ) -> "CodelistResolution":
         from ._util import build_codelists
 
         reporting_schema = self.get_schema(dataset_id=dataset_id)
         ref_schema = self.get_schema(dataset_id=ref_dataset_id)
+        logger.info("exporting reference dataset %d to resolve codelists", ref_dataset_id)
         ref_frames = self.etl_export(dataset_id=ref_dataset_id).to_frames(
             poll_interval=poll_interval, timeout=timeout
         )
         return build_codelists(reporting_schema, ref_schema, ref_frames)
+
+    @staticmethod
+    def _report_codelist_coverage(
+        resolution: "CodelistResolution",
+        ref_dataset_id: int,
+        *,
+        strict: bool,
+    ) -> None:
+        """Log coverage, and warn or raise when it is incomplete."""
+        logger.info("codelists from reference dataset %d: %s", ref_dataset_id, resolution.summary())
+        if resolution.is_complete:
+            return
+        detail = (
+            f"Reference dataset {ref_dataset_id} does not contain lookup values for "
+            f"these fields; those columns will accept any string. "
+            f"Another reference dataset in this dataflow may hold them — "
+            f"get_template() selects one automatically."
+        )
+        if strict:
+            raise CodelistResolutionError(list(resolution.unresolved), detail)
+        warnings.warn(
+            f"{resolution.summary()}. {detail}",
+            UserWarning,
+            stacklevel=3,
+        )
+        logger.warning("unresolved LINK/CODELIST fields: %s", sorted(resolution.unresolved))
+
+    def _best_reference_dataset(
+        self, reporting_schema: DatasetSchema, refs: list[ReferenceDataset]
+    ) -> ReferenceDataset | None:
+        """Pick the reference dataset whose schema covers the most LINK fields.
+
+        Compares schema IDs only — no data export — so this costs one cheap
+        GET per reference dataset rather than one export job each. Picking
+        ``refs[0]`` blindly is wrong on real dataflows: on dataflow 2003 the
+        codelists live in the *fourth* reference dataset.
+        """
+        from ._util import reference_coverage
+
+        best: ReferenceDataset | None = None
+        best_score = 0
+        for ref in refs:
+            try:
+                score = reference_coverage(reporting_schema, self.get_schema(dataset_id=ref.id))
+            except ReportnetError as exc:
+                logger.warning("could not read schema of reference dataset %d: %s", ref.id, exc)
+                continue
+            logger.debug(
+                "reference dataset %d (%s) covers %d LINK field(s)", ref.id, ref.name, score
+            )
+            if score > best_score:
+                best, best_score = ref, score
+        if best is None:
+            logger.warning(
+                "none of the %d reference dataset(s) match this dataset's LINK fields", len(refs)
+            )
+        else:
+            logger.info(
+                "selected reference dataset %d (%s), covering %d LINK field(s)",
+                best.id, best.name, best_score,
+            )
+        return best
 
     def get_template(
         self,
@@ -621,6 +809,7 @@ class DataflowClient:
         ref_dataset_id: int | None = None,
         poll_interval: float = 5.0,
         timeout: float | None = None,
+        strict: bool = False,
     ) -> "dict[str, object]":
         """Return empty, fully-typed DataFrames for every table in *dataset_id*.
 
@@ -628,9 +817,10 @@ class DataflowClient:
 
         1. Fetches the dataset schema (field names and types).
         2. Locates the reference dataset — uses *ref_dataset_id* if given,
-           otherwise picks the first reference dataset for this dataflow
-           automatically.  If the dataflow has no reference datasets, LINK /
-           CODELIST columns are left as plain strings.
+           otherwise picks the one whose schema actually covers this dataset's
+           LINK fields (comparing schema IDs, which costs one cheap request per
+           reference dataset and no export jobs).  If nothing covers them, LINK /
+           CODELIST columns are left as plain strings **and a warning is issued**.
         3. Exports the reference data and resolves codelist values.
         4. Returns one empty DataFrame per table, with:
 
@@ -647,9 +837,16 @@ class DataflowClient:
                 Auto-detected from the dataflow when omitted.
             poll_interval: Seconds between polls while exporting the reference data.
             timeout: Maximum seconds to wait for the reference export job.
+            strict: Raise :class:`~reportnet.CodelistResolutionError` instead of
+                warning when LINK/CODELIST columns cannot be constrained. Use
+                this when a template that silently accepts anything would be
+                worse than no template at all.
 
         Returns:
             A ``dict`` mapping table name → empty typed DataFrame.
+
+        Raises:
+            CodelistResolutionError: If *strict* and any LINK field is unresolved.
 
         Example::
 
@@ -667,30 +864,59 @@ class DataflowClient:
                      for col in ["category"]})])
             flow.import_file(dataset_id=93953, file=df)
         """
+        from ._util import linked_field_names
+
         schema = self.get_schema(dataset_id=dataset_id)
+        linked = linked_field_names(schema)
 
         _ref_id = ref_dataset_id
-        if _ref_id is None:
-            refs = self.get_reference_datasets()
-            _ref_id = refs[0].id if refs else None
+        if _ref_id is None and linked:
+            # Don't guess refs[0] — pick the reference dataset that actually
+            # holds these LINK fields' lookup tables (cheap, schema-only).
+            best = self._best_reference_dataset(schema, self.get_reference_datasets())
+            _ref_id = best.id if best is not None else None
 
         codelists: dict[str, list[str]] | None = None
         if _ref_id is not None:
-            from .exceptions import ReportnetError
             try:
-                codelists = self.get_codelists(
+                resolution = self._resolve_codelists(
                     dataset_id=dataset_id,
                     ref_dataset_id=_ref_id,
                     poll_interval=poll_interval,
                     timeout=timeout,
                 )
-            except ReportnetError:
+                codelists = resolution.values
+                self._report_codelist_coverage(resolution, _ref_id, strict=strict)
+            except CodelistResolutionError:
+                raise
+            except ReportnetError as exc:
                 # Codelist retrieval can fail for several reasons: the reporter
                 # key may be forbidden from exporting the reference dataset
                 # (403), the export job may fail server-side, or the job may
                 # time out.  Fall back to plain-string LINK columns rather than
                 # failing — numeric, date, and boolean columns are still typed.
-                pass
+                # This weakens the result, so it is never silent.
+                if strict:
+                    raise CodelistResolutionError(
+                        linked, f"Reference export failed: {exc}"
+                    ) from exc
+                warnings.warn(
+                    f"Could not resolve codelists from reference dataset {_ref_id} ({exc}); "
+                    f"LINK/CODELIST columns will accept any string. "
+                    f"Affected fields: {sorted(linked)}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                logger.warning("codelist resolution failed for dataset %d: %s", dataset_id, exc)
+        elif linked:
+            message = (
+                f"This dataset has {len(linked)} LINK/CODELIST field(s) but no reference "
+                f"dataset provides their values; those columns will accept any string. "
+                f"Affected fields: {sorted(linked)}"
+            )
+            if strict:
+                raise CodelistResolutionError(linked, message)
+            warnings.warn(message, UserWarning, stacklevel=2)
 
         return schema.to_frames(codelists=codelists)
 

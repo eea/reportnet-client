@@ -7,6 +7,7 @@ from .dataflow import DataflowClient
 from .exceptions import (
     APIError,
     AuthError,
+    CodelistResolutionError,
     DatasetLockedError,
     JobFailedError,
     JobTimeoutError,
@@ -65,6 +66,7 @@ __all__ = [
     "APIError",
     "AuthError",
     "DatasetLockedError",
+    "CodelistResolutionError",
     "RateLimitError",
     "JobFailedError",
     "JobTimeoutError",
