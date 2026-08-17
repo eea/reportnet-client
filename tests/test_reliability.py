@@ -264,3 +264,55 @@ def test_reference_dataset_unknown_lists_available(flow):
     with pytest.raises(KeyError) as excinfo:
         flow.reference_dataset("nothing")
     assert "Reference Dataset - Codelist" in str(excinfo.value)
+
+
+# ── Empty reference tables ────────────────────────────────────────────────────
+# Reportnet exports a zero-column CSV for a table with no rows, so the schema
+# promises columns the export doesn't carry. Looking one up used to raise
+# ColumnNotFoundError from polars; it must be reported as unresolved instead.
+
+def test_codelists_treat_an_empty_reference_table_as_unresolved():
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet._util import build_codelists
+    from reportnet.models import DatasetSchema
+
+    reporting = DatasetSchema.from_dict(REPORTING_SCHEMA)
+    ref = DatasetSchema.from_dict(RIGHT_REF_SCHEMA)
+
+    # What polars produces from an empty Reportnet CSV: 0 rows, 0 columns.
+    resolution = build_codelists(reporting, ref, {"Categories": pl.DataFrame()})
+
+    assert resolution.values == {}
+    assert "category" in resolution.unresolved
+
+
+def test_codelists_treat_an_all_null_column_as_unresolved():
+    """An empty codelist would become Enum([]), rejecting every value."""
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet._util import build_codelists
+    from reportnet.models import DatasetSchema
+
+    resolution = build_codelists(
+        DatasetSchema.from_dict(REPORTING_SCHEMA),
+        DatasetSchema.from_dict(RIGHT_REF_SCHEMA),
+        {"Categories": pl.DataFrame({"code": [None, None]}, schema={"code": pl.String})},
+    )
+    assert resolution.values == {}
+    assert "category" in resolution.unresolved
+
+
+def test_get_template_survives_empty_reference_tables(mock_router, flow):
+    """End-to-end: an empty codelist table must warn, not raise."""
+    pytest.importorskip("polars")
+    import polars as pl
+
+    _mock_reference_export(mock_router, 901, "Categories.csv", b"")
+
+    with pytest.warns(UserWarning, match="unresolved|any string"):
+        templates = flow.get_template(dataset_id=100)
+
+    assert templates["Table1a"].schema["category"] == pl.String
