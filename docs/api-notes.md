@@ -8,7 +8,9 @@ This page exists because most of this library's value is hard-won knowledge
 about a partly-undocumented API. Negative results are worth as much as code:
 without them, the next person re-derives them.
 
-*Last verified: 17 August 2026, against production.*
+*Last verified: 17 August 2026, against production (dataflows 1619 / 2003).
+The endpoint behaviour below comes from a full `pytest --integration` run:
+58 passed, 4 xfailed.*
 
 ## There is no "release" endpoint
 
@@ -52,24 +54,56 @@ still has to press **Release** in the Reportnet UI.
 ## The Swagger spec is incomplete
 
 `https://api.reportnet.europa.eu/swagger-ui.html` does **not** list everything
-the API serves. Several endpoints this library depends on — and which the help
-pages document — are missing from it entirely:
+the API serves. Endpoints this library uses successfully, and which the help
+pages document, are missing from it entirely.
 
-| Endpoint | In Swagger? | In help docs? | Works? |
+The live column below comes from the `--integration` suite against production
+dataflow 1619 (see `tests/test_integration.py`):
+
+| Endpoint | In Swagger? | In help docs? | Live result |
 |---|---|---|---|
-| `POST /dataset/exportFile` | No | Yes | Yes |
-| `POST /dataset/exportFileDL` | No | Yes | Yes |
-| `GET /dataset/exportDatasetFile` | No | Yes | Yes |
-| `GET /dataset/exportDatasetFileDL` | No | Yes | Yes |
-| `PUT /orchestrator/jobs/addValidationJob/{datasetId}` | No | Yes | Yes |
-| `GET /orchestrator/jobs/pollForJobStatus/{jobId}` | No | Yes | Yes |
-| `GET /validation/listGroupValidations{,DL}/{datasetId}` | No | Yes | Yes |
-| `GET /downloadValidation/{snapshotId}` | No | Yes | Yes |
-| `PUT /referenceDataset/{datasetId}` | No | No | Yes |
+| `PUT /orchestrator/jobs/addValidationJob/{datasetId}` | No | Yes | **Works** |
+| `GET /orchestrator/jobs/pollForJobStatus/{jobId}` | No | Yes | **Works** |
+| `GET /validation/listGroupValidationsDL/{datasetId}` | No | Yes | **Works** |
+| `GET /dataset/v4/etlExport/{datasetId}` | Yes | Yes | **Works** |
+| `POST /dataset/exportFile` | No | Yes | 403 — needs extra permissions |
+| `GET /dataset/exportDatasetFile` | No | Yes | **404** |
+| `GET /dataset/exportDatasetFileDL` | No | Yes | **404** |
+| `GET /snapshot/v1/historicReleases` | Yes | — | 403 — needs custodian access |
 
-**Practical consequence:** treat Swagger as a lower bound on the API, and the
-help pages as a separate, partly-overlapping source. Neither is complete on its
-own. Never conclude "the endpoint doesn't exist" from Swagger alone.
+Two separate lessons here, and it's worth not conflating them:
+
+1. **Swagger genuinely under-reports.** The orchestrator and validation
+   endpoints in the top rows are absent from every spec yet work in production
+   and are exercised by the test suite. So you can never conclude "this
+   endpoint doesn't exist" from Swagger alone.
+
+2. **But absence from Swagger is still a useful smell.** The three endpoints
+   that 404 or 403 in practice are *also* the ones missing from Swagger. For
+   `exportDatasetFile` / `exportDatasetFileDL` the most likely reading is that
+   they are documented in the help pages but **not deployed** on this
+   environment — Swagger is right and the help pages are stale. The
+   corresponding client methods (`export_dataset_file`,
+   `export_dataset_file_dl`) therefore may not be usable in production; their
+   integration tests are marked `xfail`.
+
+**Practical consequence:** treat Swagger and the help pages as two partial,
+partly-contradictory sources. When they disagree, only a live call settles it —
+which is what the `--integration` suite is for.
+
+## Endpoints that need more than a reporter API key
+
+Confirmed live. These are wrapped by the client and are correct, but your key
+may not be permitted to call them:
+
+| Endpoint | Client method | Result |
+|---|---|---|
+| `POST /dataset/exportFile` | `export_file()` | 403 — needs additional permissions |
+| `GET /snapshot/v1/historicReleases` | `list_historic_releases()` | 403 — needs custodian access |
+
+A 403 here means the key lacks the right, not that the call is malformed — the
+client raises `AuthError` either way, so check your key's role before assuming
+a bug.
 
 ## `/private/` routes are not reachable with an API key
 

@@ -176,13 +176,21 @@ prepare and validate a submission; a human must press *Release* in the web UI.
 Don't go looking for it again — and if you do find one, update
 `docs/api-notes.md`.
 
-**Swagger is incomplete.** `https://api.reportnet.europa.eu/swagger-ui.html`
-omits endpoints this library uses successfully and that the help pages document
-(`/dataset/exportFile`, `/orchestrator/jobs/*`, `/validation/listGroupValidations*`,
-`/downloadValidation/*`, `/referenceDataset/*`). Never conclude an endpoint
-doesn't exist from Swagger alone — check the help pages too. The specs are
+**Swagger is incomplete, but its gaps are still informative.**
+`https://api.reportnet.europa.eu/swagger-ui.html` omits `/orchestrator/jobs/*`
+and `/validation/listGroupValidationsDL`, which demonstrably work in production
+and are covered by the integration suite — so never conclude an endpoint
+doesn't exist from Swagger alone. *However*, the endpoints that 404/403 live
+(`exportDatasetFile`, `exportDatasetFileDL`, `exportFile`) are also the ones
+missing from it, so a Swagger gap is a warning sign worth heeding. Where
+Swagger and the help pages disagree, only a live call settles it. The specs are
 public: `GET /swagger-resources` lists all 13 services, each at
 `/{service}/v2/api-docs`.
+
+**Some wrapped methods don't work on production.** `export_dataset_file` and
+`export_dataset_file_dl` 404; `export_file` and `list_historic_releases` 403
+without elevated rights. Their integration tests are `xfail` — don't "fix"
+them without reading `docs/api-notes.md` first.
 
 **`/private/` routes 404 for API-key auth** — they're service-to-service. This
 is why `is_big_dataflow` reads the `bigData` field rather than calling the
