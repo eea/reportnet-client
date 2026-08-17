@@ -479,6 +479,14 @@ Terminal statuses: `FINISHED`, `FAILED`, `REFUSED`, `CANCELED`, `CANCELED_BY_ADM
 
 ## Release history
 
+> **The API cannot release a dataset.** There is no endpoint that creates a
+> release or submission — verified against all 13 Swagger service specs and all
+> three help-documentation categories. You can automate everything up to and
+> including validation, but a human must press **Release** in the Reportnet web
+> UI to submit. See [API notes](https://eea.github.io/reportnet-client/api-notes/).
+
+You can read the release history:
+
 ```python
 releases = ie.list_historic_releases(dataset_id=ds.id)
 for r in releases:

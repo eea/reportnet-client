@@ -4,10 +4,12 @@
 
 ```python
 flow = client.for_dataflow(1619)
-ie = flow.for_provider(17)   # Ireland's provider_id
+ie = flow.find_reporter("IE")        # or flow.for_provider(17)
+
+ds = ie.dataset("Table1a")           # look the dataset up by table name
 
 handle = ie.import_file(
-    dataset_id=93953,
+    dataset_id=ds.id,
     file="data.csv",
 )
 handle.wait()

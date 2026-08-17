@@ -168,6 +168,30 @@ never requires `keyring`, `polars` or `geopandas`; don't hoist those imports.
 IDs. Worked examples use **17 = Ireland (IE)**; 42 is Andorra, and was
 mislabelled as Ireland throughout the docs before — `test_providers.py` pins this.
 
+### API limitations worth knowing (see `docs/api-notes.md`)
+
+**There is no release/submit endpoint.** Verified 2026-08-17 across all 13
+Swagger service specs and all three help-doc categories. The library can
+prepare and validate a submission; a human must press *Release* in the web UI.
+Don't go looking for it again — and if you do find one, update
+`docs/api-notes.md`.
+
+**Swagger is incomplete.** `https://api.reportnet.europa.eu/swagger-ui.html`
+omits endpoints this library uses successfully and that the help pages document
+(`/dataset/exportFile`, `/orchestrator/jobs/*`, `/validation/listGroupValidations*`,
+`/downloadValidation/*`, `/referenceDataset/*`). Never conclude an endpoint
+doesn't exist from Swagger alone — check the help pages too. The specs are
+public: `GET /swagger-resources` lists all 13 services, each at
+`/{service}/v2/api-docs`.
+
+**`/private/` routes 404 for API-key auth** — they're service-to-service. This
+is why `is_big_dataflow` reads the `bigData` field rather than calling the
+purpose-built `/dataflow/private/v1/{dataflowId}/isBigDataflow`.
+
+`docs/api-notes.md` also lists endpoints that exist but aren't wrapped yet
+(presigned upload, `etlImportDL`, attachment fields, lighter schema calls) —
+check there before adding a method.
+
 ### API endpoint map
 
 | Method | Endpoint | Notes |
