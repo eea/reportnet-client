@@ -89,4 +89,31 @@ Reportnet has two storage backends:
 | **BigData (DLT2)** | Large-scale columnar storage | `export_file_dl`, `export_dataset_file_dl`, `list_group_validations_dl` |
 
 Use `flow.is_big_dataflow()` to check which backend a dataflow uses and pick
-the right methods.
+the right methods. `etl_export()` selects v3 (Citus) or v4 (BigData) for you
+automatically.
+
+## The reporting lifecycle — and where the API stops
+
+A submission goes through these stages:
+
+```
+ discover schema  →  import data  →  validate  →  fix errors  →  RELEASE
+ └──────────────────── this library ─────────────────────┘      └── web UI ──┘
+```
+
+**The API cannot release a dataset.** There is no endpoint that creates a
+release or submission — verified across all 13 Swagger service specs and all
+three help-documentation categories. You can automate everything up to and
+including validation, but a human must press **Release** in the Reportnet web
+interface to actually submit.
+
+What you *can* do programmatically is read the release history:
+
+```python
+releases = ie.list_historic_releases(dataset_id=93953)
+for r in releases:
+    print(r["releaseDate"], r.get("status"))
+```
+
+See [API notes](api-notes.md) for the full evidence, plus other API limitations
+and quirks worth knowing.

@@ -17,7 +17,10 @@ from enum import Enum
 from typing import Any, Callable
 
 from ._http import HttpSession
+from ._log import get_logger
 from .exceptions import JobFailedError, JobTimeoutError
+
+logger = get_logger(__name__)
 
 
 class JobStatus(str, Enum):
@@ -69,16 +72,29 @@ class JobHandle:
         on_status: Callable[[JobStatus], None] | None = None,
     ) -> "JobHandle":
         deadline = time.monotonic() + timeout if timeout is not None else None
+        started = time.monotonic()
+        previous: JobStatus | None = None
         while True:
             data = self._poll()
             current = JobStatus(data["status"])
+            if current != previous:
+                logger.info(
+                    "job %d: %s (after %.0fs)", self.job_id, current.value,
+                    time.monotonic() - started,
+                )
+                previous = current
             if on_status is not None:
                 on_status(current)
             if current.is_terminal:
                 if not current.is_successful:
+                    logger.warning("job %d ended with %s", self.job_id, current.value)
                     raise JobFailedError(self.job_id, current.value)
                 return self
             if deadline is not None and time.monotonic() >= deadline:
+                logger.warning(
+                    "job %d timed out after %.0fs (last status %s)",
+                    self.job_id, time.monotonic() - started, current.value,
+                )
                 raise JobTimeoutError(self.job_id)
             time.sleep(poll_interval)
 

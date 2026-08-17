@@ -207,11 +207,45 @@ def test_build_codelists():
     ref_schema = DatasetSchema.from_dict(REF_SCHEMA_RESPONSE)
     ref_frames = {"Categories": pl.DataFrame({"code": ["B", "A", "C"]})}
 
-    codelists = build_codelists(reporting_schema, ref_schema, ref_frames)
+    resolution = build_codelists(reporting_schema, ref_schema, ref_frames)
 
     # Only the LINK field (category) should be included; values are sorted
-    assert set(codelists) == {"category"}
-    assert codelists["category"] == ["A", "B", "C"]
+    assert set(resolution.values) == {"category"}
+    assert resolution.values["category"] == ["A", "B", "C"]
+    # Everything the reporting schema links to was found in this reference dataset.
+    assert resolution.is_complete
+    assert resolution.resolved == ("category",)
+    assert resolution.unresolved == ()
+
+
+def test_build_codelists_reports_unresolved_fields():
+    """A LINK field whose PK lives in a different reference dataset must be
+    reported, not silently dropped — a partial mapping looks like a complete one."""
+    pytest.importorskip("polars")
+    import polars as pl
+
+    from reportnet._util import build_codelists
+    from reportnet.models import DatasetSchema
+
+    reporting_schema = DatasetSchema.from_dict(SCHEMA_RESPONSE)
+    # A reference schema that contains none of the reporting schema's PK IDs.
+    unrelated = DatasetSchema.from_dict({
+        "idDataSetSchema": "other", "nameDatasetSchema": "Other",
+        "tableSchemas": [{
+            "idTableSchema": "t-other", "nameTableSchema": "Unrelated",
+            "recordSchema": {"fieldSchema": [
+                {"id": "no-match", "name": "something", "type": "TEXT"},
+            ]},
+        }],
+    })
+    resolution = build_codelists(
+        reporting_schema, unrelated, {"Unrelated": pl.DataFrame({"something": ["x"]})}
+    )
+
+    assert resolution.values == {}
+    assert not resolution.is_complete
+    assert "category" in resolution.unresolved
+    assert "unresolved" in resolution.summary()
 
 
 def test_validate_frame_empty_frame_no_errors():

@@ -60,13 +60,48 @@ template = schema.table("Table1a").to_frame(codelists=codelists)
 
 See the [Schema guide](schema.md#link-fields-resolving-valid-values) for more detail.
 
-## Finding the reference dataset ID
+## Finding the right reference dataset
 
-The dataset ID appears in the Reportnet URL when you navigate to the
-reference dataset tab in the UI:
+A dataflow usually has **several** reference datasets, and each LINK field
+resolves from only one of them. Picking the wrong one doesn't fail — it just
+resolves nothing.
+
+On production dataflow 2003, the spatial dataset's 10 LINK fields resolve like
+this:
+
+| Reference dataset | LINK fields covered |
+|---|---|
+| Spatial reference data | 0 |
+| Descriptive reference data | 0 |
+| **Spatial codelist** | **10** |
+| Descriptive codelist | 0 |
+
+So the first one in the list covers nothing at all.
+
+**Let the library choose.** [`get_template()`](schema.md) compares schemas and
+picks the reference dataset that actually covers your fields — no export jobs
+needed to work it out:
+
+```python
+templates = ie.get_template(dataset_id=93953)   # picks the right one for you
+```
+
+**Look one up by name** when you do want a specific dataset. Matching is
+case-insensitive and accepts a substring:
+
+```python
+ref = flow.reference_dataset("codelist")     # "Reference Dataset - Codelist"
+codelists = ie.get_codelists(dataset_id=93953, ref_dataset_id=ref.id)
+```
+
+An ambiguous or unknown name raises `KeyError` listing the candidates, so you
+never silently get the wrong one.
+
+**Or read the ID from the UI** — it appears in the Reportnet URL when you open
+the reference dataset tab:
 
 ```
 https://reportnet.europa.eu/dataflow/1619/dataset/12345?tab=...
-                                                     ^^^^^
-                                               REF_DATASET_ID
+                                                  ^^^^^
+                                            REF_DATASET_ID
 ```

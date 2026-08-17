@@ -6,7 +6,10 @@ from typing import Any
 
 import httpx
 
+from ._log import get_logger
 from .exceptions import APIError, AuthError, DatasetLockedError, RateLimitError
+
+logger = get_logger(__name__)
 
 _RETRYABLE_5XX = frozenset({500, 502, 503, 504})
 _MAX_RETRIES = 3
@@ -48,14 +51,24 @@ class HttpSession:
         attempt = 0
         while True:
             last_attempt = attempt >= _MAX_RETRIES
+            logger.debug("%s %s", method, url)
             try:
                 r = self._client.request(method, url, **kwargs)
-            except httpx.TransportError:
+            except httpx.TransportError as exc:
                 if last_attempt:
+                    logger.warning(
+                        "%s %s failed after %d attempts: %s", method, url, attempt + 1, exc
+                    )
                     raise
-                time.sleep(_backoff(attempt))
+                delay = _backoff(attempt)
+                logger.warning(
+                    "%s %s failed (%s); retrying in %.1fs (attempt %d/%d)",
+                    method, url, exc, delay, attempt + 1, _MAX_RETRIES,
+                )
+                time.sleep(delay)
                 attempt += 1
                 continue
+            logger.debug("%s %s -> %d", method, url, r.status_code)
             # Only retry 5xx on GET — POST/PUT may have side effects.
             # Don't retry a 500 that is actually a wrapped auth failure.
             if (
@@ -64,7 +77,12 @@ class HttpSession:
                 and not last_attempt
                 and not _is_wrapped_auth_500(r)
             ):
-                time.sleep(_backoff(attempt))
+                delay = _backoff(attempt)
+                logger.warning(
+                    "%s %s returned %d; retrying in %.1fs (attempt %d/%d)",
+                    method, url, r.status_code, delay, attempt + 1, _MAX_RETRIES,
+                )
+                time.sleep(delay)
                 attempt += 1
                 continue
             _raise_for_status(r)

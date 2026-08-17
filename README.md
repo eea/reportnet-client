@@ -33,6 +33,7 @@ marker, so `mypy` and `pyright` type-check your calls against it out of the box.
 - [Dataset management](#dataset-management)
 - [Provider helpers](#provider-helpers)
 - [Error handling](#error-handling)
+- [Logging](#logging)
 - [Development](#development)
 - [Interactive notebooks](#interactive-notebooks)
 - [Licence](#licence)
@@ -125,9 +126,21 @@ datasets = ie.get_reporting_datasets()
 # [ReportingDataset(id=93953, table_name='Table1a', status='PENDING'),
 #  ReportingDataset(id=93954, table_name='Table7',  status='PENDING')]
 
-# Work with a specific dataset
-ds = datasets[0]
+# Work with a specific dataset — by name, not list position
+ds = ie.dataset("Table1a")
 print(ds.id, ds.table_name, ds.status)
+
+# Or get them all keyed by table name
+ie.datasets_by_table()
+# {"Table1a": ReportingDataset(id=93953, ...), "Table7": ReportingDataset(...)}
+```
+
+`dataset()` needs a reporter-scoped client (every country has a dataset called
+`Table1a`), and an unknown name raises `KeyError` listing the names that exist.
+Reference datasets have the same lookup, matching on a substring:
+
+```python
+ref = flow.reference_dataset("codelist")   # "Reference Dataset - Codelist"
 ```
 
 ## Discover the schema
@@ -169,6 +182,22 @@ print(template.dtypes)
 LINK and CODELIST columns become `pl.Enum` (polars) or `CategoricalDtype` (pandas)
 so invalid values are rejected immediately when you assign them — before the data
 ever reaches the API.
+
+A dataflow can have several reference datasets, and a LINK field only resolves
+from the one that actually holds its lookup table. `get_template()` inspects the
+schemas and picks that one for you (cheap — no extra export jobs).
+
+If some columns *can't* be constrained — the reference export was forbidden, or
+no reference dataset covers them — you get a **warning** rather than a template
+that silently accepts anything. Pass `strict=True` to make that an error instead:
+
+```python
+# Raises CodelistResolutionError rather than handing back unconstrained columns
+templates = ie.get_template(dataset_id=ds.id, strict=True)
+```
+
+Use `strict=True` in automated pipelines, where a template that enforces nothing
+is worse than no template at all.
 
 If you need the codelists as a plain dict (e.g. to show users what values are
 valid), call `get_codelists()` directly:
@@ -450,6 +479,14 @@ Terminal statuses: `FINISHED`, `FAILED`, `REFUSED`, `CANCELED`, `CANCELED_BY_ADM
 
 ## Release history
 
+> **The API cannot release a dataset.** There is no endpoint that creates a
+> release or submission — verified against all 13 Swagger service specs and all
+> three help-documentation categories. You can automate everything up to and
+> including validation, but a human must press **Release** in the Reportnet web
+> UI to submit. See [API notes](https://eea.github.io/reportnet-client/api-notes/).
+
+You can read the release history:
+
 ```python
 releases = ie.list_historic_releases(dataset_id=ds.id)
 for r in releases:
@@ -506,6 +543,28 @@ except APIError as e:
 Transient network errors and 5xx responses on GET requests are retried automatically
 (up to 3 times, exponential back-off). POST and PUT are not retried to avoid
 duplicate jobs.
+
+`CodelistResolutionError` is raised only when you pass `strict=True` to
+`get_template()` or `get_codelists()`; by default those cases produce a warning.
+
+## Logging
+
+The library logs to the `reportnet` logger and is silent until you opt in.
+Useful when a job has been polling for twenty minutes and you want to know why:
+
+```python
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("reportnet").setLevel(logging.DEBUG)
+```
+
+| Level | What you get |
+|---|---|
+| `DEBUG` | every HTTP request/response, every job poll |
+| `INFO` | job status transitions with elapsed time, reference-dataset selection, codelist coverage |
+| `WARNING` | retries (with reason and delay), failed/timed-out jobs, and any fallback that weakens the result |
+
+API keys are never written to a log record.
 
 ## Development
 

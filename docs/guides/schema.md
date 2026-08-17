@@ -95,6 +95,26 @@ codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=REF_DATASET_ID)
 #  "ry": ["0", "1"]}
 ```
 
+!!! warning "Pick the right reference dataset"
+    A dataflow often has several reference datasets, and a LINK field only
+    resolves from the one holding its lookup table. On dataflow 2003, the first
+    reference dataset covers **none** of the spatial dataset's 10 LINK fields —
+    the third covers all of them.
+
+    If the one you pass can't resolve every field, `get_codelists()` warns and
+    tells you which fields were left unconstrained. Pass `strict=True` to raise
+    [`CodelistResolutionError`][reportnet.CodelistResolutionError] instead, or
+    let [`get_template()`](#get-an-empty-dataframe-with-correct-types) choose
+    the reference dataset for you — it compares schemas and picks the one that
+    actually covers your fields.
+
+    ```python
+    # Fails loudly rather than returning a mapping that constrains nothing
+    codelists = flow.get_codelists(
+        dataset_id=93953, ref_dataset_id=REF_DATASET_ID, strict=True
+    )
+    ```
+
 Pass `codelists` to `to_frame()` so LINK columns become `pl.Enum` (polars) or
 `CategoricalDtype` (pandas) — invalid values are rejected at assignment time:
 

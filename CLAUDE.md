@@ -54,6 +54,7 @@ src/reportnet/
   viz.py            # dataflow_to_mermaid — pure rendering, no I/O
   interactive.py    # connect_interactive — non-raising helper for notebooks/UIs
   _http.py          # httpx.Client wrapper: auth header, error mapping, retry/back-off
+  _log.py           # NullHandler setup + get_logger(); see "Logging" below
   exceptions.py     # ReportnetError hierarchy
   providers.py      # DataProvider mapping table + by_id / by_country / by_group helpers
   keychain.py       # system keychain helpers (save_key / get_key / delete_key)
@@ -66,6 +67,7 @@ tests/
   test_providers.py / test_keychain.py / test_http_retry.py
   test_connect_interactive.py / test_notebooks.py
   test_packaging.py            # metadata, py.typed, back-compat re-exports
+  test_reliability.py          # codelist coverage, logging, name-based lookup
   test_integration.py          # live API — skipped unless --integration
 ```
 
@@ -106,6 +108,31 @@ back-reference to the HTTP session. Methods:
 It lives in `jobs.py`, not `models.py`, because it performs network I/O.
 `models.py` is parsed data only — `test_packaging.py` enforces that.
 
+**Never degrade silently.** This is the rule that matters most in this domain:
+unvalidated data doesn't fail at the user's desk, it fails as a rejected
+submission weeks later. Any path that returns a *weaker* result than asked for
+— unresolved codelists, a reference export that 403s, a guessed dataset — must
+`warnings.warn` **and** log a warning, and must be escapable via `strict=True`
+raising `CodelistResolutionError`. A bare `except ReportnetError: pass` is a bug.
+
+`get_template()` picks its reference dataset by schema coverage
+(`_best_reference_dataset`), never `refs[0]`. Verified live on dataflow 2003:
+`refs[0]` covers 0 of 10 LINK fields there while `refs[2]` covers all 10, so the
+old behaviour returned unconstrained string columns with no indication.
+`build_codelists()` returns a `CodelistResolution` (values + resolved +
+unresolved), not a bare dict, precisely so partial results are detectable.
+
+**Logging** — the library logs to the `reportnet` hierarchy via
+`_log.get_logger(__name__)` and installs a `NullHandler`, so it is silent unless
+the application opts in. `DEBUG` = every request and poll; `INFO` = job
+transitions and orchestration progress; `WARNING` = retries and every
+degradation fallback. Never log headers — the API key lives there.
+
+**Name-based lookup** — `dataset(table_name)`, `datasets_by_table()` and
+`reference_dataset(name)` exist because real scripts were indexing by list
+position (`ds[0]`, `refs[3]`). `dataset()` requires a provider-scoped client,
+since table names repeat across reporters.
+
 **Schema layer** — `get_schema()` returns a `DatasetSchema` of `TableSchema` /
 `FieldSchema` / `FieldType`. `TableSchema` carries the DataFrame helpers:
 `to_frame()` (empty typed template), `cast_frame()` (coerce an existing frame,
@@ -140,6 +167,38 @@ never requires `keyring`, `polars` or `geopandas`; don't hoist those imports.
 **Provider IDs.** Most countries appear twice in `providers.py` with different
 IDs. Worked examples use **17 = Ireland (IE)**; 42 is Andorra, and was
 mislabelled as Ireland throughout the docs before — `test_providers.py` pins this.
+
+### API limitations worth knowing (see `docs/api-notes.md`)
+
+**There is no release/submit endpoint.** Verified 2026-08-17 across all 13
+Swagger service specs and all three help-doc categories. The library can
+prepare and validate a submission; a human must press *Release* in the web UI.
+Don't go looking for it again — and if you do find one, update
+`docs/api-notes.md`.
+
+**Swagger is incomplete, but its gaps are still informative.**
+`https://api.reportnet.europa.eu/swagger-ui.html` omits `/orchestrator/jobs/*`
+and `/validation/listGroupValidationsDL`, which demonstrably work in production
+and are covered by the integration suite — so never conclude an endpoint
+doesn't exist from Swagger alone. *However*, the endpoints that 404/403 live
+(`exportDatasetFile`, `exportDatasetFileDL`, `exportFile`) are also the ones
+missing from it, so a Swagger gap is a warning sign worth heeding. Where
+Swagger and the help pages disagree, only a live call settles it. The specs are
+public: `GET /swagger-resources` lists all 13 services, each at
+`/{service}/v2/api-docs`.
+
+**Some wrapped methods don't work on production.** `export_dataset_file` and
+`export_dataset_file_dl` 404; `export_file` and `list_historic_releases` 403
+without elevated rights. Their integration tests are `xfail` — don't "fix"
+them without reading `docs/api-notes.md` first.
+
+**`/private/` routes 404 for API-key auth** — they're service-to-service. This
+is why `is_big_dataflow` reads the `bigData` field rather than calling the
+purpose-built `/dataflow/private/v1/{dataflowId}/isBigDataflow`.
+
+`docs/api-notes.md` also lists endpoints that exist but aren't wrapped yet
+(presigned upload, `etlImportDL`, attachment fields, lighter schema calls) —
+check there before adding a method.
 
 ### API endpoint map
 
@@ -197,8 +256,9 @@ ReportnetError
     AuthError            # 401 / 403, plus gateway-wrapped 401-as-500
     DatasetLockedError   # 423 — another job is already running on the dataset
     RateLimitError       # 429
-  JobFailedError(job_id, status)   # terminal but not FINISHED
-  JobTimeoutError(job_id)          # wait() exceeded timeout
+  CodelistResolutionError(unresolved)  # only when strict=True
+  JobFailedError(job_id, status)       # terminal but not FINISHED
+  JobTimeoutError(job_id)              # wait() exceeded timeout
 ```
 
 ### Testing
