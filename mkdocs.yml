@@ -51,6 +51,7 @@ nav:
     - Provider helpers: guides/providers.md
     - Logging: guides/logging.md
   - API notes: api-notes.md
+  - Changelog: changelog.md
   - Notebooks: notebooks.md
   - API Reference:
     - ReportnetClient: api/client.md

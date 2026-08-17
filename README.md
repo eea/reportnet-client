@@ -36,6 +36,7 @@ marker, so `mypy` and `pyright` type-check your calls against it out of the box.
 - [Logging](#logging)
 - [Development](#development)
 - [Interactive notebooks](#interactive-notebooks)
+- [Changelog](#changelog)
 - [Licence](#licence)
 
 ## Installation
@@ -619,6 +620,12 @@ uv run marimo export html notebooks/01_explore_dataflow.py -o docs/notebook_prev
 The exported file can be committed and served via GitHub Pages as a static preview — useful for
 sharing with colleagues who don't have Python installed. The preview is read-only (no live API
 calls), but shows the notebook layout and all markdown documentation.
+
+## Changelog
+
+Release history is in [CHANGELOG.md](CHANGELOG.md). While the version is below
+1.0, breaking changes may land in a minor release — they're always listed under
+**Changed** with a migration note.
 
 ## Licence
 
