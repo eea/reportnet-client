@@ -5,7 +5,7 @@ reporter. Obtain one via [`ReportnetClient.for_dataflow()`][reportnet.ReportnetC
 
 ```python
 flow = client.for_dataflow(1619)          # dataflow scope only
-ie = flow.for_provider(42)               # further scoped to reporter 42
+ie = flow.for_provider(17)               # further scoped to reporter 17 (IE)
 ```
 
 All methods automatically fill in `dataflow_id` (and `provider_id` when set).

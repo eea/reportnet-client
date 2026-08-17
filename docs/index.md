@@ -8,10 +8,10 @@ Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.e
 pip install reportnet
 
 # Optional: DataFrame support (polars, pandas, modin — via narwhals)
-pip install "reportnet[dataframe]"
+pip install "reportnet-client[dataframe]"
 
 # Optional: system keychain storage for API keys
-pip install "reportnet[keyring]"
+pip install "reportnet-client[keyring]"
 ```
 
 ## Quick start
@@ -23,7 +23,7 @@ client = ReportnetClient(api_key="your-api-key")
 
 # Scope to a dataflow and a specific reporter country
 flow = client.for_dataflow(1619)
-ie = flow.for_provider(42)   # Ireland's provider ID
+ie = flow.for_provider(17)   # Ireland's provider ID
 
 # Import a CSV
 ie.import_file(dataset_id=93953, file="ireland.csv").wait()

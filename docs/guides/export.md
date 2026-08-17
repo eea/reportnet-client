@@ -9,7 +9,7 @@ DataFrames directly.
 Returns a ZIP archive with one CSV per table.
 
 ```python
-ie = client.for_dataflow(1619).for_provider(42)
+ie = client.for_dataflow(1619).for_provider(17)
 
 handle = ie.etl_export(dataset_id=93953)
 zip_bytes = handle.result(poll_interval=10.0, timeout=600.0)
@@ -20,7 +20,7 @@ with open("export.zip", "wb") as f:
 
 ## Export directly to DataFrames
 
-Requires `pip install "reportnet[dataframe]"`.
+Requires `pip install "reportnet-client[dataframe]"`.
 
 ```python
 frames = ie.etl_export(dataset_id=93953).to_frames(poll_interval=10.0, timeout=600.0)

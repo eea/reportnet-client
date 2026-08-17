@@ -3,7 +3,7 @@
 ## Trigger validation
 
 ```python
-ie = client.for_dataflow(1619).for_provider(42)
+ie = client.for_dataflow(1619).for_provider(17)
 
 handle = ie.add_validation_job(dataset_id=93953)
 handle.wait(poll_interval=10.0, timeout=600.0)

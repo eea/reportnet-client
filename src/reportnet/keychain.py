@@ -12,7 +12,7 @@ def _keyring() -> Any:
         return keyring
     except ImportError:
         raise ImportError(
-            "keyring is required; install it with: pip install reportnet[keyring]"
+            "keyring is required; install it with: pip install reportnet-client[keyring]"
         ) from None
 
 

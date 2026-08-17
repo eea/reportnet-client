@@ -57,7 +57,7 @@ def test_get_retries_on_transport_error_then_succeeds(mock_router, client):
 
     with patch.object(client._http._client, "request", side_effect=mock_request):
         with _patch_sleep(), _patch_random():
-            handle = client.etl_export(dataset_id=1, dataflow_id=2)
+            handle = client.etl_export(dataset_id=1, dataflow_id=2, version=4)
 
     assert call_count == 2
     assert isinstance(handle, JobHandle)
@@ -70,7 +70,7 @@ def test_get_raises_after_max_retries_on_transport_error(mock_router, client):
         side_effect=httpx.ConnectError("unreachable"),
     ):
         with _patch_sleep(), _patch_random(), pytest.raises(httpx.ConnectError):
-            client.etl_export(dataset_id=1, dataflow_id=2)
+            client.etl_export(dataset_id=1, dataflow_id=2, version=4)
 
 
 def test_get_retries_on_5xx(mock_router, client):
@@ -85,7 +85,7 @@ def test_get_retries_on_5xx(mock_router, client):
 
     with patch.object(client._http._client, "request", side_effect=mock_request):
         with _patch_sleep(), _patch_random():
-            handle = client.etl_export(dataset_id=1, dataflow_id=2)
+            handle = client.etl_export(dataset_id=1, dataflow_id=2, version=4)
 
     assert call_count == 2
     assert isinstance(handle, JobHandle)
@@ -195,6 +195,6 @@ def test_sleep_is_called_between_retries(client):
 
     with patch.object(client._http._client, "request", side_effect=mock_request):
         with _patch_random(), patch("reportnet._http.time.sleep") as mock_sleep:
-            client.etl_export(dataset_id=1, dataflow_id=2)
+            client.etl_export(dataset_id=1, dataflow_id=2, version=4)
 
     assert mock_sleep.call_count == 2

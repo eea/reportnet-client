@@ -1,4 +1,4 @@
-from reportnet.providers import PROVIDERS, by_group
+from reportnet.providers import PROVIDERS, by_country, by_group, by_id
 
 
 def test_by_group_eea_returns_only_eea():
@@ -29,3 +29,24 @@ def test_by_group_covers_all_providers():
     for g in all_groups:
         recovered.extend(by_group(g))
     assert set(p.provider_id for p in recovered) == set(p.provider_id for p in PROVIDERS)
+
+
+# ── documentation examples ────────────────────────────────────────────────────
+# Docstrings and docs/ use `for_provider(17)` as the worked "Ireland" example.
+# Provider 42 is Andorra — it was previously mislabelled as Ireland throughout.
+
+def test_ireland_example_provider_id_is_actually_ireland():
+    ie = by_id(17)
+    assert ie is not None
+    assert ie.country_code == "IE"
+    assert ie.country_name == "Ireland"
+
+
+def test_provider_42_is_andorra_not_ireland():
+    ad = by_id(42)
+    assert ad is not None
+    assert ad.country_code == "AD"
+
+
+def test_by_country_finds_both_ireland_provider_ids():
+    assert {p.provider_id for p in by_country("IE")} == {17, 63}

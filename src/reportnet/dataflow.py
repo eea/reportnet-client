@@ -1,13 +1,22 @@
+"""Dataflow-scoped convenience layer.
+
+Layering rule (see also :mod:`reportnet.client`): this class owns *scoping*
+only — deciding which IDs get filled in when the caller omits them. Every quirk
+of an endpoint itself (URL shape, parameter names, API version selection) lives
+one level down in :class:`~reportnet.ReportnetClient`, so the two layers can
+never disagree about how to talk to the API.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, Literal, Union
 
+from .jobs import JobHandle, JobStatus
 from .models import (
+    DataflowContents,
     DataflowInfo,
     DatasetSchema,
-    JobHandle,
-    JobStatus,
     ReferenceDataset,
     Reporter,
     ReportingDataset,
@@ -39,7 +48,7 @@ class DataflowClient:
         df.get_reporters()         # list of countries and their dataset IDs
 
         # Scoped to a specific reporter country
-        ie = df.for_provider(42)
+        ie = df.for_provider(17)
         ie.import_file(dataset_id=93953, file="data.csv")
         ie.add_validation_job(dataset_id=93953)
         frames = ie.etl_export(dataset_id=93953).to_frames()
@@ -61,7 +70,6 @@ class DataflowClient:
         self._dataflow_id = dataflow_id
         self._provider_id = provider_id
         self._country_code = country_code
-        self._is_big_cache: bool | None = None
 
     def _pid(self, override: int | None) -> int | None:
         """Return override if given, else fall back to the stored provider_id."""
@@ -89,7 +97,7 @@ class DataflowClient:
         Example::
 
             df = client.for_dataflow(1619)
-            ie = df.for_provider(42)   # Ireland's provider ID
+            ie = df.for_provider(17)   # Ireland's provider ID
             ie.import_file(dataset_id=93953, file="ireland.csv")
         """
         return DataflowClient(self._client, self._dataflow_id, provider_id=provider_id)
@@ -145,6 +153,24 @@ class DataflowClient:
         """Return True if the API key is valid and the API is reachable."""
         return self._client.ping(dataflow_id=self._dataflow_id)
 
+    def get_dataflow_contents(self) -> DataflowContents:
+        """Return the whole GET /dataflow/v1/{dataflowId} payload in one request.
+
+        ``get_dataflow``, ``get_reporting_datasets``, ``get_reference_datasets``
+        and ``get_test_datasets`` all read this same endpoint — reach for this
+        when you need more than one of them, to avoid repeating the round-trip.
+
+        Note that ``reporting_datasets`` here is **not** filtered by this
+        client's ``provider_id``; use :meth:`get_reporting_datasets` for that.
+
+        Example::
+
+            contents = flow.get_dataflow_contents()
+            print(contents.info.name)
+            print(len(contents.reporting_datasets), "reporting datasets")
+        """
+        return self._client.get_dataflow_contents(dataflow_id=self._dataflow_id)
+
     def get_dataflow(self) -> DataflowInfo:
         """Return name, type and status of this dataflow."""
         return self._client.get_dataflow(dataflow_id=self._dataflow_id)
@@ -163,7 +189,7 @@ class DataflowClient:
         Example::
 
             # Scoped — returns only Ireland's datasets
-            ie = flow.for_provider(42)
+            ie = flow.for_provider(17)
             datasets = ie.get_reporting_datasets()
             # [ReportingDataset(id=93953, table_name='Table1a', ...),
             #  ReportingDataset(id=93954, table_name='Table7', ...)]
@@ -208,13 +234,10 @@ class DataflowClient:
     def is_big_dataflow(self) -> bool:
         """Return True if this is a BigData (DLT2) dataflow.
 
-        Cached per instance — BigData-ness doesn't change over the lifetime
-        of a DataflowClient, and this is now consulted by more than one
-        method (etl_export, import_file).
+        Cached on the underlying :class:`~reportnet.ReportnetClient`, so the
+        lookup is shared with every other scoped client built from it.
         """
-        if self._is_big_cache is None:
-            self._is_big_cache = self._client.is_big_dataflow(dataflow_id=self._dataflow_id)
-        return self._is_big_cache
+        return self._client.is_big_dataflow(dataflow_id=self._dataflow_id)
 
     # ── Import ────────────────────────────────────────────────────────────────
 
@@ -352,7 +375,9 @@ class DataflowClient:
           explicitly with ``version=5``; never chosen automatically.
 
         When *version* is ``None`` (the default), the correct version is chosen
-        automatically by calling :meth:`is_big_dataflow` — between v3 and v4 only.
+        automatically — between v3 and v4 only. That selection lives in
+        :meth:`ReportnetClient.etl_export <reportnet.ReportnetClient.etl_export>`,
+        so both client layers behave identically.
 
         Args:
             data_provider_codes: ISO 3166-1 alpha-2 country code passed as
@@ -368,6 +393,9 @@ class DataflowClient:
                 keys. Only pass this if you have confirmed your key/dataflow
                 combination needs it.
         """
+        # Resolving the version here as well as downstairs looks redundant, but
+        # the two scoping decisions below both depend on knowing it. The lookup
+        # is cached on the shared client, so this costs no extra request.
         if version is None:
             version = 4 if self.is_big_dataflow() else 3
         # v3 (Citus) uses dataProviderCodes (country code) instead of providerId.
@@ -611,7 +639,7 @@ class DataflowClient:
              ``CategoricalDtype`` (pandas) so invalid values are rejected
              at assignment time rather than silently accepted.
 
-        Requires ``pip install reportnet[dataframe]``.
+        Requires ``pip install reportnet-client[dataframe]``.
 
         Args:
             dataset_id: The reporting dataset to build templates for.
@@ -736,98 +764,22 @@ class DataflowClient:
         correction requested, grey = pending).  Reference and test datasets
         are shown as separate nodes connected to the dataflow.
 
+        Costs a single API request — the rendering itself lives in
+        :func:`reportnet.viz.dataflow_to_mermaid`, which takes already-fetched
+        models if you'd rather supply your own.
+
         Args:
-            include_test: When True, also show test datasets (one extra API
-                call).
+            include_test: When True, also show test datasets.
 
         Returns:
             A Mermaid ``graph LR`` diagram string.
         """
-        from collections import defaultdict
+        from .viz import dataflow_to_mermaid
 
-        from .providers import by_id as provider_by_id
-
-        info = self.get_dataflow()
-        ref_ds = self.get_reference_datasets()
-        reporting_ds = self.get_reporting_datasets()
-        test_ds = self.get_test_datasets() if include_test else []
-
-        def _esc(s: str) -> str:
-            return (
-                s.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace('"', "&quot;")
-                .replace("#", "#35;")
-            )
-
-        # Worst-status priority order (higher index = worse)
-        _STATUS_RANK = {"FINAL": 0, "TECHNICALLY_ACCEPTED": 1, "PENDING": 2,
-                        "CORRECTION_REQUESTED": 3}
-        _STATUS_COLOR = {
-            "FINAL":                 ("#A8D5A2", "#1a3a1a"),
-            "TECHNICALLY_ACCEPTED":  ("#C8E6C9", "#1a3a1a"),
-            "PENDING":               ("#D0D0D0", "#333333"),
-            "CORRECTION_REQUESTED":  ("#FFD580", "#333333"),
-        }
-
-        lines: list[str] = ["graph LR"]
-
-        # ── Dataflow ──────────────────────────────────────────────────────
-        df_label = (
-            f"{_esc(info.name)}<br/>"
-            f"<small>id={info.id} · {_esc(info.type)} · {_esc(info.status)}</small>"
+        contents = self.get_dataflow_contents()
+        return dataflow_to_mermaid(
+            contents.info,
+            reporting_datasets=contents.reporting_datasets,
+            reference_datasets=contents.reference_datasets,
+            test_datasets=contents.test_datasets if include_test else (),
         )
-        lines.append(f'    df[["{df_label}"]]')
-        lines.append("    style df fill:#2C5F8A,color:#fff,stroke:#1a3f63")
-        lines.append("")
-
-        # ── Reference datasets ────────────────────────────────────────────
-        for rd in ref_ds:
-            nid = f"ref_{rd.id}"
-            lines.append(f'    {nid}["{_esc(rd.name)}"]')
-            lines.append(f"    style {nid} fill:#4CAF50,color:#fff,stroke:#388E3C")
-            lines.append(f"    df -->|ref| {nid}")
-        if ref_ds:
-            lines.append("")
-
-        # ── Test datasets ─────────────────────────────────────────────────
-        for td in test_ds:
-            nid = f"test_{td.id}"
-            lines.append(f'    {nid}["{_esc(td.name)}"]')
-            lines.append(f"    style {nid} fill:#FF9800,color:#fff,stroke:#E65100")
-            lines.append(f"    df -.->|test| {nid}")
-        if test_ds:
-            lines.append("")
-
-        # ── One node per reporter — coloured by worst status ──────────────
-        by_provider: dict[int, list[ReportingDataset]] = defaultdict(list)
-        for ds in reporting_ds:
-            by_provider[ds.provider_id].append(ds)
-
-        for provider_id, datasets in sorted(by_provider.items()):
-            provider = provider_by_id(provider_id)
-            if provider is not None:
-                label = f"{provider.country_code} — {provider.country_name}"
-            else:
-                label = datasets[0].name or str(provider_id)
-
-            worst = max(datasets, key=lambda d: _STATUS_RANK.get(d.status, 2)).status
-            fill, text = _STATUS_COLOR.get(worst, ("#E8E8E8", "#333333"))
-
-            n_tables = len(datasets)
-            n_final = sum(1 for d in datasets if d.status == "FINAL")
-            ds_lines = "<br/>".join(
-                f"<small>{_esc(ds.table_name)}: {ds.id}</small>"
-                for ds in sorted(datasets, key=lambda d: d.table_name)
-            )
-            full_label = (
-                f"{_esc(label)}<br/>{ds_lines}<br/><small>{n_final}/{n_tables} FINAL</small>"
-            )
-
-            nid = f"p_{provider_id}"
-            lines.append(f'    {nid}["{full_label}"]')
-            lines.append(f"    style {nid} fill:{fill},color:{text},stroke:#999")
-            lines.append(f"    df --> {nid}")
-
-        return "\n".join(lines)
