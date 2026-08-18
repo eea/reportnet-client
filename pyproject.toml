@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "reportnet-client"
-version = "0.5.0"
+version = "0.5.1"
 description = "Python client library for the EEA Reportnet 3 REST API"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -363,3 +363,16 @@ def test_etl_export_detection_is_cached_across_calls(mock_router, client):
     client.etl_export(dataset_id=1, dataflow_id=2)
     client.etl_export(dataset_id=1, dataflow_id=2)
     assert lookup.call_count == 1
+
+
+def test_zip_to_frames_tolerates_an_empty_csv_member(client, mock_router):
+    """Reportnet emits a zero-byte CSV for an empty table; polars raises
+    NoDataError on it. One empty table must not sink the whole export."""
+    pytest.importorskip("polars")
+    from reportnet._util import zip_to_frames
+
+    frames = zip_to_frames(_make_zip(("Empty.csv", b""), ("Full.csv", b"a,b\n1,2\n")))
+
+    assert set(frames) == {"Empty", "Full"}
+    assert frames["Empty"].shape == (0, 0)
+    assert frames["Full"].shape == (1, 2)

@@ -90,6 +90,11 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
         import polars as pl
 
         def _read_csv(data: bytes) -> Any:
+            if not data.strip():
+                # Reportnet emits a zero-byte CSV for a table with no rows;
+                # polars raises NoDataError on it. One empty table must not
+                # sink the whole export.
+                return pl.DataFrame()
             return pl.read_csv(io.BytesIO(data))
 
         def _read_parquet(data: bytes) -> Any:
@@ -103,6 +108,8 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
             import pandas as pd
 
             def _read_csv(data: bytes) -> Any:
+                if not data.strip():
+                    return pd.DataFrame()
                 return pd.read_csv(io.BytesIO(data))
 
             def _read_parquet(data: bytes) -> Any:
@@ -410,8 +417,19 @@ def build_codelists(
                 # Schema says the table exists, but the export didn't contain it.
                 unresolved.append(f.name)
                 continue
-            col = nw.from_native(frame, eager_only=True)[ref_col_name]
+            nwf = nw.from_native(frame, eager_only=True)
+            if ref_col_name not in nwf.columns:
+                # Reportnet exports a zero-column CSV for a table with no rows,
+                # so the schema promises columns the export doesn't carry.
+                unresolved.append(f.name)
+                continue
+            col = nwf[ref_col_name]
             values: list[Any] = col.drop_nulls().unique().sort().to_list()
+            if not values:
+                # An empty codelist would become Enum([]), which rejects every
+                # value — worse than leaving the column as a plain string.
+                unresolved.append(f.name)
+                continue
             codelists[f.name] = [str(v) for v in values]
 
     return CodelistResolution(
