@@ -20,9 +20,11 @@ from .jobs import JobHandle, JobStatus
 from .keychain import delete_key, get_key, save_key
 from .models import (
     Capabilities,
+    DataCollection,
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
+    EuDataset,
     FieldSchema,
     FieldType,
     ReferenceDataset,
@@ -58,6 +60,8 @@ __all__ = [
     "ReportingDataset",
     "ReferenceDataset",
     "TestDataset",
+    "DataCollection",
+    "EuDataset",
     "DatasetSchema",
     "TableSchema",
     "FieldSchema",

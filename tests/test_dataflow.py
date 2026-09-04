@@ -1,7 +1,18 @@
 """Tests for dataflow-level metadata and new dataset management methods."""
-import httpx
+import dataclasses
 
-from reportnet import DataflowInfo, ReferenceDataset, Reporter, ReportingDataset, TestDataset
+import httpx
+import pytest
+
+from reportnet import (
+    DataCollection,
+    DataflowInfo,
+    EuDataset,
+    ReferenceDataset,
+    Reporter,
+    ReportingDataset,
+    TestDataset,
+)
 from reportnet.dataflow import DataflowClient
 
 DATAFLOW_RESPONSE = {
@@ -546,3 +557,109 @@ def test_is_big_dataflow_is_cached_on_the_shared_client(mock_router, client):
     assert flow.for_provider(17).is_big_dataflow() is True
     assert client.is_big_dataflow(dataflow_id=1619) is True
     assert route.call_count == 1
+
+# ── dataCollections / euDatasets ──────────────────────────────────────────────
+# Both arrive in the same GET /dataflow/v1/{id} payload as the reporting and
+# reference datasets. A DataCollection is one table across ALL reporters (only
+# released data lands there), and an EuDataset is its EU-level aggregate.
+
+DATAFLOW_RESPONSE_WITH_COLLECTIONS = {
+    **DATAFLOW_RESPONSE,
+    "dataCollections": [
+        {
+            "id": 89278,
+            "dataSetName": "Data Collection - Table1a",
+            "datasetSchema": "schema-abc",
+            "status": "PENDING",
+            "dueDate": "2026-12-31",
+        },
+        {
+            "id": 89245,
+            "dataSetName": "Data Collection - Table7",
+            "datasetSchema": "schema-def",
+            "status": None,
+            "dueDate": None,
+        },
+    ],
+    "euDatasets": [
+        {
+            "id": 89290,
+            "dataSetName": "EU Dataset - Table1a",
+            "datasetSchema": "schema-abc",
+            "status": "PENDING",
+        },
+    ],
+}
+
+
+def test_data_collections_are_parsed(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE_WITH_COLLECTIONS)
+    )
+    contents = client.get_dataflow_contents(dataflow_id=1619)
+
+    assert len(contents.data_collections) == 2
+    first = contents.data_collections[0]
+    assert isinstance(first, DataCollection)
+    assert first.id == 89278
+    assert first.name == "Data Collection - Table1a"
+    assert first.schema_id == "schema-abc"
+    assert first.status == "PENDING"
+    assert first.due_date == "2026-12-31"
+
+
+def test_eu_datasets_are_parsed(mock_router, client):
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE_WITH_COLLECTIONS)
+    )
+    contents = client.get_dataflow_contents(dataflow_id=1619)
+
+    assert len(contents.eu_datasets) == 1
+    eu = contents.eu_datasets[0]
+    assert isinstance(eu, EuDataset)
+    assert (eu.id, eu.name, eu.schema_id, eu.status) == (
+        89290,
+        "EU Dataset - Table1a",
+        "schema-abc",
+        "PENDING",
+    )
+
+
+def test_absent_collections_default_to_empty(mock_router, client):
+    """Most payloads omit both keys entirely; that must not raise."""
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_RESPONSE)
+    )
+    contents = client.get_dataflow_contents(dataflow_id=1619)
+
+    assert contents.data_collections == ()
+    assert contents.eu_datasets == ()
+
+
+def test_null_collections_default_to_empty(mock_router, client):
+    """The API sends null rather than omitting the key on some dataflows."""
+    payload = {**DATAFLOW_RESPONSE, "dataCollections": None, "euDatasets": None}
+    mock_router.get("/dataflow/v1/1619").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+    contents = client.get_dataflow_contents(dataflow_id=1619)
+
+    assert contents.data_collections == ()
+    assert contents.eu_datasets == ()
+
+
+def test_collections_tolerate_missing_optional_fields():
+    """Only `id` is required; the rest degrade to "" / None."""
+    collection = DataCollection.from_dict({"id": 1})
+    assert (collection.name, collection.schema_id) == ("", "")
+    assert collection.status is None and collection.due_date is None
+
+    eu = EuDataset.from_dict({"id": 2})
+    assert (eu.name, eu.schema_id, eu.status) == ("", "", None)
+
+
+def test_collections_are_frozen():
+    """models.py dataclasses are immutable — parsed data, not mutable state."""
+    collection = DataCollection.from_dict({"id": 1})
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        collection.id = 2  # type: ignore[misc]

@@ -198,8 +198,15 @@ class DataCollection:
 
     Note that the API does not populate ``nameDatasetSchema`` for these, so
     there is no separate table name — the table is part of ``name``
-    (e.g. ``"Data Collection - Table1a"``). Look one up with
-    :meth:`~reportnet.DataflowClient.data_collection`.
+    (e.g. ``"Data Collection - Table1a"``). Match on ``schema_id`` rather than
+    parsing that string when you need to pair one with a reporting dataset::
+
+        contents = flow.get_dataflow_contents()
+        by_schema = {dc.schema_id: dc for dc in contents.data_collections}
+        collection = by_schema.get(reporting_dataset.schema_id)
+
+    There is no name-based lookup helper for these yet, unlike
+    :meth:`~reportnet.DataflowClient.reference_dataset`.
     """
 
     id: int
