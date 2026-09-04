@@ -45,3 +45,6 @@ REVIEW.md
 .vscode/
 *.swp
 site/
+
+# Scratch notebooks / scripts — anything starting with "+_" is local-only.
++_*
