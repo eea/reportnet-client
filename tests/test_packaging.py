@@ -75,3 +75,20 @@ def test_models_module_holds_no_network_code():
     source = Path(models.__file__).read_text()
     assert "time.sleep" not in source
     assert "HttpSession" not in source
+
+
+def test_every_public_model_is_re_exported_at_top_level():
+    """`reportnet.X` must work for everything models.py declares public.
+
+    test_all_exported_names_actually_resolve checks the other direction only
+    (that reportnet.__all__ resolves), so a new dataclass added to
+    models.__all__ and forgotten in __init__.py passes both mypy and ruff and
+    fails only for the user at the import line.
+    """
+    import reportnet.models as models
+
+    missing = [name for name in models.__all__ if not hasattr(reportnet, name)]
+    assert not missing, (
+        f"models.__all__ exports {missing}, which reportnet does not re-export — "
+        f"add them to src/reportnet/__init__.py"
+    )

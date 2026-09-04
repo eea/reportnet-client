@@ -1,7 +1,12 @@
 """Live integration tests against the real Reportnet API.
 
 Run with:
-    uv run pytest -m integration -v
+    uv run pytest --integration -v
+
+The --integration FLAG is what enables these; `-m integration` alone selects
+them and conftest then skips every one, so that command reports success having
+run nothing. To run a subset, combine the two:
+    uv run pytest --integration -m integration -k bigdata -v
 
 Skipped automatically if the keyring credential for the dataflow is missing.
 These tests make real HTTP calls and may take several minutes for BigData jobs.
@@ -48,9 +53,19 @@ def test_get_dataflow_info(df_1619):
 
 @pytest.mark.integration
 def test_is_big_dataflow(df_1619):
+    """`assert isinstance(is_big, bool)` passed whatever the answer was, so it
+    could never fail. Assert the invariant instead: the cached flag, the raw
+    payload field, and the etlExport version the client auto-selects must all
+    agree. Those three disagreeing is the actual bug worth catching — it sends
+    the wrong export version and silently changes the payload shape."""
     is_big = df_1619.is_big_dataflow()
-    print(f"\n  BigData: {is_big}")
     assert isinstance(is_big, bool)
+    assert is_big is df_1619.get_dataflow_contents().info.big_data
+
+    handle = df_1619.etl_export(dataset_id=DATASET_ID)
+    expected_version = "v4" if is_big else "v3"
+    print(f"\n  BigData={is_big}, export kicked off as {expected_version}")
+    assert handle.job_id
 
 
 @pytest.mark.integration
@@ -494,7 +509,10 @@ def test_validation_job_and_results(df_1619):
 @pytest.mark.integration
 def test_check_import_process(df_1619):
     status = df_1619.check_import_process(dataset_id=DATASET_ID)
-    assert "anyLockAssigned" in status or isinstance(status, dict)
+    # `or isinstance(status, dict)` used to make this unfailable — status is
+    # always a dict. Assert on the payload the client actually depends on.
+    assert isinstance(status, dict)
+    assert "importInProgress" in status or "anyLockAssigned" in status, status
     print(f"\n  import process status: {status}")
 
 
@@ -810,3 +828,114 @@ def test_live_requests_are_logged(df_2003, caplog):
     messages = [r.getMessage() for r in caplog.records]
     assert any(m.startswith("GET ") for m in messages), messages
     assert not any("ApiKey" in m for m in messages), "API key must never be logged"
+
+
+# ── Cross-backend behaviour ───────────────────────────────────────────────────
+# Everything above is written against one dataflow at a time, so a method that
+# is wrong for a whole backend passes unnoticed — which is exactly how
+# validate() came to call the BigData listing endpoint on every dataflow.
+# These run the same behaviour against both dataflows.
+
+BACKEND_DATAFLOWS = [
+    pytest.param(DATAFLOW_ID, id=f"df{DATAFLOW_ID}"),
+    pytest.param(DATAFLOW_ID_BIGDATA, id=f"df{DATAFLOW_ID_BIGDATA}"),
+]
+
+
+@pytest.fixture(scope="module", params=BACKEND_DATAFLOWS)
+def any_backend(request):
+    """A DataflowClient per configured dataflow, whatever its backend.
+
+    Distinguishes "no key configured" from "key lacks rights": the first is a
+    setup gap, the second is a finding. Reporting both as a bare skip hides
+    permission problems behind what looks like an unconfigured machine.
+    """
+    dataflow_id = request.param
+    try:
+        key = reportnet.get_key(dataflow_id)
+    except KeyError:
+        pytest.skip(f"No API key in keyring for dataflow {dataflow_id}")
+
+    flow = reportnet.ReportnetClient(api_key=key).for_dataflow(dataflow_id)
+    try:
+        flow.get_dataflow()
+    except reportnet.AuthError as exc:
+        pytest.skip(
+            f"key for dataflow {dataflow_id} cannot read GET /dataflow/v1/{dataflow_id} "
+            f"({exc}) — reporter-scoped keys hit this; grant read rights to run "
+            f"the cross-backend tests"
+        )
+    return flow
+
+
+def _first_reporting_dataset(flow):
+    datasets = flow.get_reporting_datasets()
+    if not datasets:
+        pytest.skip("dataflow has no reporting datasets")
+    return datasets[0]
+
+
+@pytest.mark.integration
+def test_validation_listing_endpoint_matches_backend(any_backend):
+    """listGroupValidations (Citus) and listGroupValidationsDL (BigData) are not
+    interchangeable. The endpoint matching this dataflow's backend must work.
+
+    validate() chose DL unconditionally, so on a Citus dataflow it read the
+    wrong endpoint — invisible while only one backend was ever exercised.
+    """
+    dataset = _first_reporting_dataset(any_backend)
+    is_big = any_backend.is_big_dataflow()
+    call = (
+        any_backend.list_group_validations_dl
+        if is_big
+        else any_backend.list_group_validations
+    )
+    try:
+        results = call(dataset_id=dataset.id)
+    except reportnet.AuthError as exc:
+        pytest.skip(f"validation listing not authorised for this key: {exc}")
+
+    assert isinstance(results, dict)
+    print(f"\n  BigData={is_big} -> {'DL' if is_big else 'non-DL'} endpoint, "
+          f"keys: {list(results)}")
+
+
+@pytest.mark.integration
+def test_etl_export_auto_selects_the_version_for_this_backend(any_backend):
+    """v4 for BigData, v3 for Citus. Sending the wrong one mostly 'succeeds'
+    but returns a differently-shaped payload, which is why the version is
+    looked up rather than guessed."""
+    dataset = _first_reporting_dataset(any_backend)
+    is_big = any_backend.is_big_dataflow()
+
+    handle = any_backend.etl_export(dataset_id=dataset.id)
+    assert handle.job_id, "export job was not created"
+    print(f"\n  BigData={is_big} -> job {handle.job_id} "
+          f"(expects v{'4' if is_big else '3'})")
+
+
+@pytest.mark.integration
+def test_finished_export_actually_returns_the_tables(any_backend):
+    """A terminal job status is not evidence that data moved.
+
+    Reportnet reports jobs FINISHED that produced nothing (etlImport does this
+    for records missing countryCode), so any test that asserts only on
+    .status() can pass while the operation did nothing. This one reads the
+    payload back.
+    """
+    dataset = _first_reporting_dataset(any_backend)
+    try:
+        frames = any_backend.etl_export(dataset_id=dataset.id).to_frames(
+            poll_interval=10.0, timeout=1800.0
+        )
+    except reportnet.JobTimeoutError:
+        pytest.skip("export job did not finish within 30 min — server-side queueing")
+
+    assert isinstance(frames, dict)
+    assert frames, "a FINISHED export returned no tables at all"
+    for name, frame in frames.items():
+        print(f"    {name}: {frame.shape}")
+    schema = any_backend.get_schema(dataset_id=dataset.id)
+    known = {t.name for t in schema.tables}
+    unexpected = set(frames) - known
+    assert not unexpected, f"export returned tables absent from the schema: {unexpected}"
