@@ -176,3 +176,129 @@ def test_field_type_multipolygon():
     assert FieldType("MULTIPOLYGON") == FieldType.MULTIPOLYGON
     assert FieldType("MULTILINESTRING") == FieldType.MULTILINESTRING
     assert FieldType("MULTIPOINT") == FieldType.MULTIPOINT
+
+
+# ── reporter-scoped keys and the BigData preflight ────────────────────────────
+# import_file consults is_big_dataflow() to decide whether to send providerId.
+# That reads GET /dataflow/v1/{id}, which a reporter-scoped key may not be
+# allowed to read — in which case the import used to fail at preflight with a
+# 403 naming /dataflow/v1/{id} rather than the endpoint actually being called.
+
+DATAFLOW_BIGDATA = {"id": 2, "name": "df", "bigData": True}
+DATAFLOW_CITUS = {"id": 2, "name": "df", "bigData": False}
+
+
+def test_import_file_omits_provider_id_on_bigdata(mock_router, client):
+    mock_router.get("/dataflow/v1/2").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_BIGDATA)
+    )
+    route = mock_router.post("/dataset/v2/importFileData/1").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    scoped = client.for_dataflow(2, provider_id=64)
+    scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n")
+
+    assert "providerId" not in route.calls[0].request.url.params
+
+
+def test_import_file_sends_provider_id_on_citus(mock_router, client):
+    mock_router.get("/dataflow/v1/2").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_CITUS)
+    )
+    route = mock_router.post("/dataset/v2/importFileData/1").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    scoped = client.for_dataflow(2, provider_id=64)
+    scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n")
+
+    assert route.calls[0].request.url.params["providerId"] == "64"
+
+
+def test_import_file_works_when_the_dataflow_read_is_forbidden(mock_router, client):
+    """The import must still be attempted, and must reach the import endpoint."""
+    mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    route = mock_router.post("/dataset/v2/importFileData/1").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    scoped = client.for_dataflow(2, provider_id=64)
+    handle = scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n")
+
+    assert route.call_count == 1, "import must reach the import endpoint, not die at preflight"
+    assert "providerId" not in route.calls[0].request.url.params
+    assert handle.job_id == 100
+
+
+def test_import_file_forbidden_preflight_still_surfaces_a_real_import_403(
+    mock_router, client
+):
+    """Degrading on the preflight must not swallow a genuine 403 from the import."""
+    from reportnet import AuthError
+
+    mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    route = mock_router.post("/dataset/v2/importFileData/1").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
+    scoped = client.for_dataflow(2, provider_id=64)
+
+    with pytest.raises(AuthError):
+        scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n")
+    assert route.call_count == 1
+
+
+# ── etlImport countryCode ─────────────────────────────────────────────────────
+# Records without countryCode are silently discarded by the API while the job
+# still reports FINISHED, so the client warns rather than letting that pass.
+
+def _etl_body(records):
+    return [{"tableName": "T", "records": records}]
+
+
+def test_etl_import_warns_when_records_lack_country_code(mock_router, client):
+    mock_router.post("/dataset/v1/1/etlImport").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    records = [{"fields": [{"fieldName": "a", "value": "1"}]}]
+
+    with pytest.warns(UserWarning, match="countryCode"):
+        client.etl_import(dataset_id=1, dataflow_id=2, tables=_etl_body(records))
+
+
+def test_etl_import_does_not_warn_when_country_code_is_present(mock_router, client):
+    import warnings
+
+    mock_router.post("/dataset/v1/1/etlImport").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    records = [{"countryCode": "IT", "fields": [{"fieldName": "a", "value": "1"}]}]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        client.etl_import(dataset_id=1, dataflow_id=2, tables=_etl_body(records))
+
+
+def test_etl_import_warning_names_the_table_and_counts(mock_router, client):
+    mock_router.post("/dataset/v1/1/etlImport").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    records = [
+        {"countryCode": "IT", "fields": []},
+        {"fields": []},
+        {"countryCode": "", "fields": []},
+    ]
+
+    with pytest.warns(UserWarning) as caught:
+        client.etl_import(dataset_id=1, dataflow_id=2, tables=_etl_body(records))
+
+    message = str(caught[0].message)
+    assert "T" in message and "2/3" in message
+
+
+def test_etl_import_with_no_records_does_not_warn(mock_router, client):
+    import warnings
+
+    mock_router.post("/dataset/v1/1/etlImport").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        client.etl_import(dataset_id=1, dataflow_id=2, tables=_etl_body([]))

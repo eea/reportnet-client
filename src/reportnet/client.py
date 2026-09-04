@@ -14,10 +14,12 @@ can never disagree about how to talk to the API.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, Union
 
 from ._http import HttpSession
+from ._log import get_logger
 from ._util import to_file_tuple
 from .jobs import JobHandle
 from .models import (
@@ -29,6 +31,8 @@ from .models import (
     ReportingDataset,
     TestDataset,
 )
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from .dataflow import DataflowClient
@@ -43,8 +47,15 @@ class ReportnetClient:
         self,
         api_key: str,
         base_url: str = PRODUCTION_URL,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ) -> None:
+        """Args:
+            timeout: HTTP request timeout in seconds. The default is generous
+                because GET /dataflow/v1/{id} is slow on large dataflows —
+                30s was low enough to ReadTimeout on one measured live, and a
+                timeout there also breaks every method that reads it. Raise it
+                further for very large dataflows.
+        """
         self._http = HttpSession(api_key=api_key, base_url=base_url, timeout=timeout)
         # bigData-ness is immutable for a given dataflow, so this is safe to keep
         # for the lifetime of the client. Shared with DataflowClient, which
@@ -58,7 +69,7 @@ class ReportnetClient:
         base_url: str | None = None,
         *,
         sandbox: bool = False,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ) -> "ReportnetClient":
         """Create a client using the API key stored in the system keychain.
 
@@ -237,7 +248,13 @@ class ReportnetClient:
         tables: list[dict[str, object]],
         replace_data: bool = False,
     ) -> JobHandle:
-        """POST /dataset/v1/{datasetId}/etlImport — JSON body, Citus datasets only."""
+        """POST /dataset/v1/{datasetId}/etlImport — JSON body, Citus datasets only.
+
+        Every record must carry a ``countryCode``. Omitting it does *not* fail:
+        the job is accepted and reports ``FINISHED`` having imported nothing,
+        so a warning is raised here rather than letting the silence stand.
+        """
+        _warn_on_records_without_country_code(tables)
         response = self._http.post(
             f"/dataset/v1/{dataset_id}/etlImport",
             params={"dataflowId": dataflow_id, "replaceData": str(replace_data).lower()},
@@ -505,6 +522,38 @@ class ReportnetClient:
             params["providerId"] = provider_id
         response = self._http.get(path, params=params)
         return response.json()  # type: ignore[no-any-return]
+
+
+def _warn_on_records_without_country_code(tables: list[dict[str, Any]]) -> None:
+    """Warn if any etlImport record omits ``countryCode``.
+
+    The API drops such records and still reports the job FINISHED, so this is
+    the only signal the caller gets that nothing was written.
+    """
+    offenders: list[str] = []
+    for table in tables:
+        records = table.get("records") or []
+        if not isinstance(records, list):
+            continue
+        missing = sum(
+            1
+            for r in records
+            if isinstance(r, dict) and not r.get("countryCode")
+        )
+        if missing:
+            name = str(table.get("tableName", "<unnamed>"))
+            offenders.append(f"{name} ({missing}/{len(records)} records)")
+
+    if not offenders:
+        return
+    message = (
+        "etlImport records without countryCode: "
+        + ", ".join(offenders)
+        + ". The API silently discards these and still reports the job as "
+        "FINISHED — set countryCode on every record."
+    )
+    logger.warning(message)
+    warnings.warn(message, stacklevel=3)
 
 
 def _make_job(

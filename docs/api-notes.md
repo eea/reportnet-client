@@ -136,9 +136,61 @@ Both discovered by live testing, both encoded in the client:
   job ID, not the `{"jobId": ..., "pollingUrl": ...}` object other async
   operations return. The client synthesises the polling URL.
 - Auth failures are sometimes wrapped as **HTTP 500** by the gateway, with
-  `UNAUTHORIZED` or `401` in the body. The client detects this and raises
-  `AuthError` rather than retrying.
+  `UNAUTHORIZED`, `401` **or `403`** in the body. The client detects this and
+  raises `AuthError` rather than retrying. The 403 form looks like this — note
+  the real status is only visible inside `message`:
+
+  ```json
+  {"status": 500, "error": "Internal Server Error",
+   "message": "status 403 reading JobControllerZuul#addImportJob(...)",
+   "path": "/dataset/v2/importFileData/108953"}
+  ```
+
 - `numberOfRecords` in validation results arrives as a **string**, not a number.
+
+## `etlImport` silently discards records without `countryCode`
+
+Every record in an `etlImport` body **must** carry `countryCode`:
+
+```json
+{"tables": [{"tableName": "T",
+             "records": [{"countryCode": "IT", "fields": [...]}]}]}
+```
+
+Omit it and the request is accepted, a job is created, and that job reaches
+**`FINISHED`** — having imported **nothing**. There is no error, no warning and
+no partial result; the only way to detect it is to re-export and count rows.
+
+`ReportnetClient.etl_import` warns when any record lacks the field, but the
+deeper lesson generalises: **on this API a `FINISHED` job is not evidence that
+data landed.** Verify writes by reading them back.
+
+Two further limits found while loading a real payload
+(dataflow 1570 → 2003, September 2026):
+
+- The documented `etlImport` payload ceiling is 220 MB, but an **85 MB** body
+  failed with `HTTP 500 COMMAND_EXCEPTION`. Chunk large imports, or prefer
+  `importFileData`, whose CSV encoding is far more compact than JSON-wrapped
+  GeoJSON.
+- `etlImport` is **Citus-only**. On a BigData dataflow `importFileData` is the
+  only wrapped write path — `etlImportDL` exists but is not wrapped yet.
+
+## A reporter-scoped key may not read `/dataflow/v1/{id}`
+
+Keys differ in scope in a way that cuts across the client's layering. One key
+tested on dataflow 2003 could read `/representative/v1/dataflow/{id}` and
+`/dataschema/v1/datasetId/{id}` but got **403 on `/dataflow/v1/{id}`**.
+
+That single endpoint backs `get_dataflow`, `get_reporting_datasets`,
+`is_big_dataflow`, `dataset()`, `ping()` and — indirectly — `import_file`,
+which consults `is_big_dataflow()` to decide whether to send `providerId`.
+Before this was handled, importing with such a key failed at the preflight and
+reported a 403 against `/dataflow/v1/{id}`, *not* the endpoint being called —
+badly misleading when debugging.
+
+`DataflowClient` now degrades instead: when the backend cannot be read it omits
+`providerId` (whose *presence* is what BigData rejects) and `validate()` tries
+the DL listing endpoint before falling back to the Citus one.
 
 ## Endpoints that exist but aren't wrapped yet
 

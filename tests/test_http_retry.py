@@ -198,3 +198,76 @@ def test_sleep_is_called_between_retries(client):
             client.etl_export(dataset_id=1, dataflow_id=2, version=4)
 
     assert mock_sleep.call_count == 2
+
+
+# ── wrapped 403 ──────────────────────────────────────────────────────────────
+# The gateway wraps 403s the same way it wraps 401s. Observed live on
+# dataflow 2003 when importing with a read-only key:
+#   {"status":500,"message":"status 403 reading JobControllerZuul#addImportJob(...)"}
+# Before this was handled, that surfaced as a generic APIError *and* burned
+# three retries with back-off on a permanent permission error.
+
+WRAPPED_403_BODY = (
+    '{"timestamp":1788514956397,"status":500,"error":"Internal Server Error",'
+    '"message":"status 403 reading JobControllerZuul#addImportJob(Long,Long)",'
+    '"path":"/dataset/v2/importFileData/108953"}'
+)
+
+
+def test_500_wrapping_403_raises_auth_error_not_api_error(mock_router, client):
+    mock_router.get("/dataflow/v1/1").mock(
+        return_value=httpx.Response(500, text=WRAPPED_403_BODY)
+    )
+    with pytest.raises(AuthError) as exc_info:
+        client.get_dataflow(dataflow_id=1)
+    assert exc_info.value.status_code == 500
+
+
+def test_500_wrapping_403_is_not_retried(mock_router, client):
+    call_count = 0
+
+    def mock_request(method, url, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(500, text=WRAPPED_403_BODY)
+
+    with patch.object(client._http._client, "request", side_effect=mock_request):
+        with pytest.raises(AuthError):
+            client.get_dataflow(dataflow_id=1)
+
+    assert call_count == 1, "a permission error must not be retried"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"status":500,"message":"403 FORBIDDEN"}',
+        '{"status":500,"message":"status 403 reading Zuul#call()"}',
+        '{"status":500,"message":"403"}',
+        "{\"status\":500,\"message\":\"'403'\"}",
+    ],
+    ids=["forbidden-word", "status-403", "quoted-403", "single-quoted-403"],
+)
+def test_wrapped_403_body_variants_raise_auth_error(mock_router, client, body):
+    mock_router.get("/dataflow/v1/1").mock(return_value=httpx.Response(500, text=body))
+    with pytest.raises(AuthError):
+        client.get_dataflow(dataflow_id=1)
+
+
+def test_genuine_500_still_raises_api_error_and_is_retried(client):
+    """A server error with no auth marker must keep its old behaviour."""
+    call_count = 0
+
+    def mock_request(method, url, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(500, text='{"status":500,"message":"COMMAND_EXCEPTION"}')
+
+    with patch.object(client._http._client, "request", side_effect=mock_request):
+        with _patch_sleep(), _patch_random():
+            with pytest.raises(APIError) as exc_info:
+                client.get_dataflow(dataflow_id=1)
+
+    assert not isinstance(exc_info.value, AuthError)
+    # _MAX_RETRIES=3 retries, so 4 calls in total.
+    assert call_count == 4, "genuine 5xx on GET should still retry"

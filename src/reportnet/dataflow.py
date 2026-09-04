@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, Literal, Union
 
 from ._log import get_logger
-from .exceptions import CodelistResolutionError, ReportnetError
+from .exceptions import AuthError, CodelistResolutionError, ReportnetError
 from .jobs import JobHandle, JobStatus
 from .models import (
     DataflowContents,
@@ -90,12 +90,29 @@ class DataflowClient:
         when it correctly matches the dataset's own owner. Only used by
         methods where this has been verified; other endpoints still use
         :meth:`_pid`.
+
+        The backend lookup reads GET /dataflow/v1/{id}, which a
+        reporter-scoped key may not be allowed to read. When that read is
+        refused, providerId is suppressed rather than letting the preflight
+        fail the call: its *presence* is what causes hard 403s on BigData,
+        while the endpoints that genuinely need it use :meth:`_pid` instead.
+        Without this, a reporter key cannot import at all — and the resulting
+        error points at /dataflow/v1/{id}, not the endpoint being called.
         """
         if override is not None:
             return override
         if self._provider_id is None:
             return None
-        return None if self.is_big_dataflow() else self._provider_id
+        try:
+            is_big = self.is_big_dataflow()
+        except AuthError:
+            logger.warning(
+                "cannot read dataflow %s to detect its backend (not authorised); "
+                "omitting providerId, which is required on BigData and optional here",
+                self._dataflow_id,
+            )
+            return None
+        return None if is_big else self._provider_id
 
     def for_provider(self, provider_id: int) -> "DataflowClient":
         """Return a new DataflowClient scoped to a specific reporter / country.
@@ -604,7 +621,9 @@ class DataflowClient:
         """Trigger validation, wait for it to finish, and return structured results.
 
         Combines :meth:`add_validation_job` + :meth:`~reportnet.JobHandle.wait` +
-        :meth:`list_group_validations_dl` in one call.
+        the listing endpoint for this dataflow's backend in one call —
+        :meth:`list_group_validations_dl` for BigData, :meth:`list_group_validations`
+        for Citus. The two are not interchangeable.
 
         Args:
             dataset_id: Dataset to validate.
@@ -637,8 +656,49 @@ class DataflowClient:
         """
         handle = self.add_validation_job(dataset_id=dataset_id, provider_id=provider_id)
         handle.wait(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
-        raw = self.list_group_validations_dl(dataset_id=dataset_id, provider_id=provider_id)
+        raw = self._list_group_validations_for_backend(
+            dataset_id=dataset_id, provider_id=provider_id
+        )
         return ValidationResult._from_raw(dataset_id, raw)
+
+    def _list_group_validations_for_backend(
+        self,
+        *,
+        dataset_id: int,
+        provider_id: int | None,
+    ) -> dict[str, object]:
+        """Read validation results from the endpoint matching this backend.
+
+        ``listGroupValidationsDL`` is the BigData variant and
+        ``listGroupValidations`` the Citus one; they are not interchangeable.
+        :meth:`validate` used to call the DL endpoint unconditionally, which
+        is wrong for every Citus dataflow.
+
+        If the backend cannot be determined (a reporter-scoped key may not be
+        able to read the dataflow), the DL endpoint is tried first and the
+        Citus one used as a fallback, so neither backend is left unserved.
+        """
+        try:
+            is_big = self.is_big_dataflow()
+        except AuthError:
+            logger.warning(
+                "cannot read dataflow %s to detect its backend (not authorised); "
+                "trying listGroupValidationsDL then falling back to listGroupValidations",
+                self._dataflow_id,
+            )
+            try:
+                return self.list_group_validations_dl(
+                    dataset_id=dataset_id, provider_id=provider_id
+                )
+            except ReportnetError:
+                return self.list_group_validations(
+                    dataset_id=dataset_id, provider_id=provider_id
+                )
+        if is_big:
+            return self.list_group_validations_dl(
+                dataset_id=dataset_id, provider_id=provider_id
+            )
+        return self.list_group_validations(dataset_id=dataset_id, provider_id=provider_id)
 
     def download_validation_snapshot(
         self,
