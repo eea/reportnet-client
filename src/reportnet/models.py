@@ -25,6 +25,8 @@ __all__ = [
     "DataflowInfo",
     "DataflowContents",
     "Capabilities",
+    "DataCollection",
+    "EuDataset",
     "Reporter",
     "ReportingDataset",
     "ReferenceDataset",
@@ -183,6 +185,64 @@ class TestDataset:
 
 
 @dataclass(frozen=True)
+class DataCollection:
+    """An all-country dataset holding every reporter's *released* data.
+
+    Returned inside ``dataCollections`` by GET /dataflow/v1/{dataflowId}.
+    Where a ``ReportingDataset`` is one table for one reporter, a
+    ``DataCollection`` is one table for *all* reporters — what a custodian
+    wants when exporting a whole dataflow rather than country by country.
+
+    Only released data appears here: a dataflow whose reporters are all
+    ``PENDING`` has empty data collections.
+
+    Note that the API does not populate ``nameDatasetSchema`` for these, so
+    there is no separate table name — the table is part of ``name``
+    (e.g. ``"Data Collection - Table1a"``). Look one up with
+    :meth:`~reportnet.DataflowClient.data_collection`.
+    """
+
+    id: int
+    name: str       # dataSetName — e.g. "Data Collection - Table1a"
+    schema_id: str  # datasetSchema
+    status: str | None
+    due_date: str | None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "DataCollection":
+        return cls(
+            id=int(d["id"]),
+            name=d.get("dataSetName") or "",
+            schema_id=d.get("datasetSchema") or "",
+            status=d.get("status") or None,
+            due_date=d.get("dueDate") or None,
+        )
+
+
+@dataclass(frozen=True)
+class EuDataset:
+    """The EU-level aggregate of a data collection.
+
+    Returned inside ``euDatasets`` by GET /dataflow/v1/{dataflowId}. One per
+    table, populated from the corresponding :class:`DataCollection`.
+    """
+
+    id: int
+    name: str       # dataSetName — e.g. "EU Dataset - Table1a"
+    schema_id: str  # datasetSchema
+    status: str | None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "EuDataset":
+        return cls(
+            id=int(d["id"]),
+            name=d.get("dataSetName") or "",
+            schema_id=d.get("datasetSchema") or "",
+            status=d.get("status") or None,
+        )
+
+
+@dataclass(frozen=True)
 class DataflowContents:
     """Everything GET /dataflow/v1/{dataflowId} returns, parsed in one pass.
 
@@ -203,6 +263,8 @@ class DataflowContents:
     reporting_datasets: tuple[ReportingDataset, ...]
     reference_datasets: tuple[ReferenceDataset, ...]
     test_datasets: tuple[TestDataset, ...]
+    data_collections: tuple[DataCollection, ...] = ()
+    eu_datasets: tuple[EuDataset, ...] = ()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "DataflowContents":
@@ -215,6 +277,10 @@ class DataflowContents:
                 ReferenceDataset.from_dict(x) for x in d.get("referenceDatasets") or []
             ),
             test_datasets=tuple(TestDataset.from_dict(x) for x in d.get("testDatasets") or []),
+            data_collections=tuple(
+                DataCollection.from_dict(x) for x in d.get("dataCollections") or []
+            ),
+            eu_datasets=tuple(EuDataset.from_dict(x) for x in d.get("euDatasets") or []),
         )
 
 

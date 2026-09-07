@@ -46,5 +46,6 @@ REVIEW.md
 *.swp
 site/
 
-# Local scratch notebooks (never committed; may hold credentials)
-notebooks/+_*
+# Scratch notebooks / scripts — anything starting with "+_" is local-only.
+# These may hold credentials; never commit them.
++_*
