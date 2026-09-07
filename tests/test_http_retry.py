@@ -271,3 +271,32 @@ def test_genuine_500_still_raises_api_error_and_is_retried(client):
     assert not isinstance(exc_info.value, AuthError)
     # _MAX_RETRIES=3 retries, so 4 calls in total.
     assert call_count == 4, "genuine 5xx on GET should still retry"
+
+
+# ── ping() and reporter-scoped keys ───────────────────────────────────────────
+# A Lead Reporter key is 403'd on /dataflow/v1/{id} while being perfectly valid
+# for the endpoints it owns. Reporting it as revoked is wrong and sends users
+# chasing a credential problem that doesn't exist. Verified live on 2003.
+
+def test_ping_true_when_403_on_dataflow_but_representatives_readable(mock_router, client):
+    mock_router.get("/dataflow/v1/1").mock(return_value=httpx.Response(403, text="Forbidden"))
+    mock_router.get("/representative/v1/dataflow/1").mock(return_value=httpx.Response(200, json=[]))
+    assert client.ping(dataflow_id=1) is True
+
+
+def test_ping_false_when_both_probes_are_forbidden(mock_router, client):
+    mock_router.get("/dataflow/v1/1").mock(return_value=httpx.Response(403, text="Forbidden"))
+    mock_router.get("/representative/v1/dataflow/1").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
+    assert client.ping(dataflow_id=1) is False
+
+
+def test_ping_false_on_401_without_a_second_probe(mock_router, client):
+    """A bad key is bad everywhere — don't waste a request confirming it."""
+    mock_router.get("/dataflow/v1/1").mock(return_value=httpx.Response(401, text="Unauthorized"))
+    route = mock_router.get("/representative/v1/dataflow/1").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    assert client.ping(dataflow_id=1) is False
+    assert route.call_count == 0

@@ -215,7 +215,12 @@ def test_import_file_sends_provider_id_on_citus(mock_router, client):
 
 
 def test_import_file_works_when_the_dataflow_read_is_forbidden(mock_router, client):
-    """The import must still be attempted, and must reach the import endpoint."""
+    """A forbidden preflight means a reporter-scoped key, which NEEDS providerId.
+
+    Verified live on dataflow 2003: a Lead Reporter key is 403'd on
+    /dataflow/v1/{id}, and its import is 403'd unless providerId is sent
+    (job 248505 succeeded once it was).
+    """
     mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
     route = mock_router.post("/dataset/v2/importFileData/1").mock(
         return_value=httpx.Response(200, json=JOB_RESPONSE)
@@ -224,14 +229,70 @@ def test_import_file_works_when_the_dataflow_read_is_forbidden(mock_router, clie
     handle = scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n")
 
     assert route.call_count == 1, "import must reach the import endpoint, not die at preflight"
-    assert "providerId" not in route.calls[0].request.url.params
+    assert route.calls[0].request.url.params["providerId"] == "64"
     assert handle.job_id == 100
+
+
+def test_import_file_retries_with_the_opposite_provider_id_on_403(mock_router, client):
+    """Whether BigData wants providerId depends on the key's role, which cannot
+    be queried. A wrong guess must self-correct rather than fail."""
+    mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    route = mock_router.post("/dataset/v2/importFileData/1")
+    route.side_effect = [
+        httpx.Response(403, text="Forbidden"),          # with providerId
+        httpx.Response(200, json=JOB_RESPONSE),         # without
+    ]
+    scoped = client.for_dataflow(2, provider_id=64)
+    handle = scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n")
+
+    assert route.call_count == 2
+    assert route.calls[0].request.url.params["providerId"] == "64"
+    assert "providerId" not in route.calls[1].request.url.params
+    assert handle.job_id == 100
+
+
+def test_import_file_retry_runs_in_the_other_direction_too(mock_router, client):
+    """Custodian case: providerId omitted first, then sent on a 403."""
+    mock_router.get("/dataflow/v1/2").mock(
+        return_value=httpx.Response(200, json={"id": 2, "bigData": True})
+    )
+    route = mock_router.post("/dataset/v2/importFileData/1")
+    route.side_effect = [
+        httpx.Response(403, text="Forbidden"),          # without providerId
+        httpx.Response(200, json=JOB_RESPONSE),         # with
+    ]
+    scoped = client.for_dataflow(2, provider_id=64)
+    handle = scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n")
+
+    assert route.call_count == 2
+    assert "providerId" not in route.calls[0].request.url.params
+    assert route.calls[1].request.url.params["providerId"] == "64"
+    assert handle.job_id == 100
+
+
+def test_import_file_explicit_provider_id_is_never_second_guessed(mock_router, client):
+    """An explicit choice is honoured — no retry, no flip."""
+    from reportnet import AuthError
+
+    route = mock_router.post("/dataset/v2/importFileData/1").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
+    scoped = client.for_dataflow(2, provider_id=64)
+
+    with pytest.raises(AuthError):
+        scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n", provider_id=99)
+    assert route.call_count == 1
+    assert route.calls[0].request.url.params["providerId"] == "99"
 
 
 def test_import_file_forbidden_preflight_still_surfaces_a_real_import_403(
     mock_router, client
 ):
-    """Degrading on the preflight must not swallow a genuine 403 from the import."""
+    """Degrading on the preflight must not swallow a genuine 403 from the import.
+
+    Both providerId choices are tried, and when both are refused the error
+    still surfaces rather than being masked.
+    """
     from reportnet import AuthError
 
     mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
@@ -242,7 +303,7 @@ def test_import_file_forbidden_preflight_still_surfaces_a_real_import_403(
 
     with pytest.raises(AuthError):
         scoped.import_file(dataset_id=1, file=b"a|b\n1|2\n")
-    assert route.call_count == 1
+    assert route.call_count == 2, "both providerId choices tried before giving up"
 
 
 # ── etlImport countryCode ─────────────────────────────────────────────────────

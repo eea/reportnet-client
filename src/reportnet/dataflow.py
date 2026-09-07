@@ -82,22 +82,29 @@ class DataflowClient:
         return override if override is not None else self._provider_id
 
     def _pid_bigdata_safe(self, override: int | None) -> int | None:
-        """Like :meth:`_pid`, but never auto-fills the stored provider_id for
-        BigData (DLT2) dataflows.
+        """Like :meth:`_pid`, but decides whether BigData wants providerId.
 
-        Confirmed live against a BigData dataflow: the API 403s on
-        etlExport/importFileData whenever providerId is present at all, even
-        when it correctly matches the dataset's own owner. Only used by
-        methods where this has been verified; other endpoints still use
-        :meth:`_pid`.
+        **Whether BigData accepts or requires ``providerId`` depends on the
+        key's role, not on the backend.** Both directions are confirmed live on
+        dataflow 2003:
 
-        The backend lookup reads GET /dataflow/v1/{id}, which a
-        reporter-scoped key may not be allowed to read. When that read is
-        refused, providerId is suppressed rather than letting the preflight
-        fail the call: its *presence* is what causes hard 403s on BigData,
-        while the endpoints that genuinely need it use :meth:`_pid` instead.
-        Without this, a reporter key cannot import at all — and the resulting
-        error points at /dataflow/v1/{id}, not the endpoint being called.
+        =====================  ==========================================
+        Key role               ``importFileData`` on BigData
+        =====================  ==========================================
+        Custodian-level        ``providerId`` present  -> 403
+        Lead Reporter          ``providerId`` absent   -> 403 (job 248505
+                               succeeded once it was sent)
+        =====================  ==========================================
+
+        There is no endpoint that reports the key's role, so this uses the
+        best available proxy: whether the key may read ``GET /dataflow/v1/{id}``.
+        A custodian-level key can; a reporter-scoped key is 403'd there. So a
+        refused backend lookup is itself the signal that this is a reporter
+        key, and reporter keys are the ones that *need* providerId.
+
+        The proxy can be wrong, so callers that can safely retry — see
+        :meth:`import_file` — flip the choice once on a 403 rather than
+        treating it as fatal.
         """
         if override is not None:
             return override
@@ -108,10 +115,10 @@ class DataflowClient:
         except AuthError:
             logger.warning(
                 "cannot read dataflow %s to detect its backend (not authorised); "
-                "omitting providerId, which is required on BigData and optional here",
-                self._dataflow_id,
+                "sending providerId=%s, which reporter-scoped keys require on BigData",
+                self._dataflow_id, self._provider_id,
             )
-            return None
+            return self._provider_id
         return None if is_big else self._provider_id
 
     def for_provider(self, provider_id: int) -> "DataflowClient":
@@ -366,22 +373,48 @@ class DataflowClient:
     ) -> JobHandle:
         """POST /dataset/v2/importFileData/{datasetId} — multipart upload.
 
-        Unlike other methods on this class, ``provider_id`` is not auto-filled
-        from the stored ``provider_id`` for BigData (DLT2) dataflows — the API
-        403s if ``providerId`` is present at all, even the correct one. See
-        :meth:`etl_export` for the same behavior on the export side.
+        Whether BigData wants ``providerId`` depends on the key's role, not the
+        backend: a custodian-level key is 403'd when it is present, a Lead
+        Reporter key when it is absent. :meth:`_pid_bigdata_safe` infers the
+        role, and this method **retries once with the opposite choice** if the
+        inference was wrong.
+
+        The retry is safe: a 403 means the request was rejected outright, so
+        nothing was written and no duplicate can result. Passing
+        ``provider_id`` explicitly disables it — an explicit choice is
+        honoured, not second-guessed.
         """
-        return self._client.import_file(
-            dataset_id=dataset_id,
-            dataflow_id=self._dataflow_id,
-            file=file,
-            filename=filename,
-            provider_id=self._pid_bigdata_safe(provider_id),
-            table_schema_id=table_schema_id,
-            replace=replace,
-            delimiter=delimiter,
-            integration_id=integration_id,
-        )
+        pid = self._pid_bigdata_safe(provider_id)
+
+        def _send(with_pid: int | None) -> JobHandle:
+            return self._client.import_file(
+                dataset_id=dataset_id,
+                dataflow_id=self._dataflow_id,
+                file=file,
+                filename=filename,
+                provider_id=with_pid,
+                table_schema_id=table_schema_id,
+                replace=replace,
+                delimiter=delimiter,
+                integration_id=integration_id,
+            )
+
+        try:
+            return _send(pid)
+        except AuthError:
+            # Only the auto-filled case is ambiguous enough to retry.
+            if provider_id is not None or self._provider_id is None:
+                raise
+            alternative = None if pid is not None else self._provider_id
+            if alternative == pid:
+                raise
+            logger.warning(
+                "import into dataset %s was refused with providerId=%s; retrying with "
+                "providerId=%s — whether BigData requires or rejects it depends on "
+                "the key's role",
+                dataset_id, pid, alternative,
+            )
+            return _send(alternative)
 
     def import_frames(
         self,
@@ -508,7 +541,20 @@ class DataflowClient:
         # the two scoping decisions below both depend on knowing it. The lookup
         # is cached on the shared client, so this costs no extra request.
         if version is None:
-            version = 4 if self.is_big_dataflow() else 3
+            try:
+                version = 4 if self.is_big_dataflow() else 3
+            except AuthError:
+                # Same failure mode the import path guards against: the backend
+                # lookup reads GET /dataflow/v1/{id}, which a reporter-scoped
+                # key cannot. Without this the call fails reporting that URL
+                # rather than the export endpoint, which is actively misleading.
+                version = 4
+                logger.warning(
+                    "cannot read dataflow %s to detect its backend (not authorised); "
+                    "defaulting to etlExport v%d. Pass version= explicitly if this "
+                    "dataflow is Citus (v3).",
+                    self._dataflow_id, version,
+                )
         # v3 (Citus) uses dataProviderCodes (country code) instead of providerId.
         # v4/v5 (BigData) reject providerId outright (403) for reporter-level
         # keys, so — unlike other methods — it is never auto-filled from the

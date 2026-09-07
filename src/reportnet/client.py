@@ -109,11 +109,20 @@ class ReportnetClient:
         return DataflowClient(self, dataflow_id=dataflow_id, provider_id=provider_id)
 
     def ping(self, *, dataflow_id: int) -> bool:
-        """Return True if the API key is valid and the API is reachable.
+        """Return True if the API key is usable for *dataflow_id*.
 
-        Makes a single lightweight GET request.  Returns False on auth failure;
-        raises on network errors (so transient connectivity issues surface
-        as exceptions rather than a silent False).
+        Raises on network errors, so transient connectivity issues surface as
+        exceptions rather than a silent False.
+
+        A 403 is **not** treated as a bad key. Reporter-scoped keys (a Lead
+        Reporter, say) are forbidden from ``GET /dataflow/v1/{id}`` while being
+        perfectly valid for the endpoints they do own — verified live on
+        dataflow 2003, where a Lead Reporter key 403s here yet imports
+        successfully. Reporting such a key as revoked sends users chasing a
+        credential problem that doesn't exist, so this falls back to the
+        representatives endpoint before giving up.
+
+        Only a 401, or a 403 from *both* probes, returns False.
 
         Example::
 
@@ -123,6 +132,25 @@ class ReportnetClient:
         from .exceptions import AuthError
         try:
             self._http.get(f"/dataflow/v1/{dataflow_id}")
+            return True
+        except AuthError as exc:
+            # Only a genuine 403 means "authenticated but not permitted here".
+            # A 401 — or a gateway-wrapped auth failure, which arrives as 500 —
+            # means the key itself is bad, and no other endpoint will accept it.
+            if exc.status_code != 403:
+                return False
+            logger.debug(
+                "ping: /dataflow/v1/%s returned 403; retrying via the representatives "
+                "endpoint, which reporter-scoped keys can read",
+                dataflow_id,
+            )
+        try:
+            self._http.get(f"/representative/v1/dataflow/{dataflow_id}")
+            logger.info(
+                "API key for dataflow %s is valid but not authorised for "
+                "GET /dataflow/v1/%s — typical of a reporter-scoped key",
+                dataflow_id, dataflow_id,
+            )
             return True
         except AuthError:
             return False

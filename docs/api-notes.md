@@ -117,18 +117,52 @@ but 404s for API-key auth. That's why
 [`is_big_dataflow()`][reportnet.ReportnetClient.is_big_dataflow] reads the
 `bigData` field from `GET /dataflow/v1/{dataflowId}` instead.
 
-## Two confirmed `providerId` traps
+## `providerId` on BigData depends on the key's ROLE, not the backend
 
-Both discovered by live testing, both encoded in the client:
+This was previously recorded here as "BigData rejects `providerId`". That is
+only half true, and the missing half makes imports impossible for the role most
+likely to be doing them. Both directions are confirmed live on dataflow 2003:
 
-- **v4/v5 `etlExport` and `importFileData` reject `providerId` outright (403)**
-  for reporter-level keys — even when the value correctly matches the dataset's
-  own owner. `datasetId` already identifies the provider. This is why
-  `DataflowClient` deliberately does *not* auto-fill `provider_id` on those
-  calls for BigData dataflows.
+| Key role | `POST /dataset/v2/importFileData/{id}` |
+|---|---|
+| Custodian-level | `providerId` **present** → 403 |
+| Lead Reporter | `providerId` **absent** → 403 |
+
+A Lead Reporter key for IT (provider 64) was refused without `providerId` and
+accepted with it — job 248505 ran to FINISHED.
+
+**There is no endpoint that reports a key's role.** The usable proxy is whether
+the key may read `GET /dataflow/v1/{id}`: custodian-level keys can, and
+reporter-scoped keys are 403'd. `DataflowClient._pid_bigdata_safe` uses exactly
+that signal, and `import_file` retries once with the opposite choice if the
+inference was wrong — safe, because a 403 means nothing was written.
+
 - **v3 (Citus) `etlExport` uses `dataProviderCodes`** (an ISO country code)
   rather than `providerId`. Filled in automatically when the client came from
   `find_reporter()`.
+
+## What a Lead Reporter key can and cannot do
+
+Measured on dataflow 2003 (BigData) with a Lead Reporter key for IT:
+
+| Capability | Result |
+|---|---|
+| `GET /dataschema/v1/datasetId/{id}` (own + reference datasets) | ✅ |
+| `GET /dataset/checkImportProcess/{id}` | ✅ |
+| `GET /representative/v1/dataflow/{id}` | ✅ |
+| `POST /dataset/v2/importFileData/{id}` **with** `providerId` | ✅ |
+| `GET /dataflow/v1/{id}` | ❌ 403 |
+| **Every export route** — `etlExport` v3/v4/v5, `exportFile`, `exportFileDL`, including reference datasets | ❌ 403 |
+| `etlImport`, v1 `importFileData`, `generateImportPresignedUrl` | ❌ 403 |
+
+Two consequences worth designing around:
+
+1. **A reporter cannot discover its own dataset IDs.** The only wrapped source
+   is `GET /dataflow/v1/{id}`, which is 403. The representatives endpoint
+   returns `hasDatasets: true` but no IDs. IDs must come from the web UI.
+2. **A reporter cannot verify its own import.** With every export forbidden,
+   there is no way to read back what was written — and per the note below, a
+   FINISHED job is not evidence that data landed.
 
 ## Response quirks
 

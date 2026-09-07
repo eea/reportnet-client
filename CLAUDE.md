@@ -236,9 +236,12 @@ which is why guessing was replaced with a lookup.
 
 Two confirmed-live API quirks, both encoded in the code with comments:
 
-- **v4/v5 reject `providerId` outright (403)** for reporter-level keys, even when
-  it correctly matches the dataset's owner. `dataset_id` already identifies the
-  provider. Same for `importFileData` on BigData dataflows.
+- **`providerId` on BigData depends on the key's ROLE, not the backend.**
+  Custodian-level keys are 403'd when it is *present*; Lead Reporter keys are
+  403'd when it is *absent* (both verified live on 2003). No endpoint reports
+  the role, so `_pid_bigdata_safe` infers it from whether the key may read
+  `GET /dataflow/v1/{id}`, and `import_file` retries once with the opposite
+  choice. Don't "simplify" this back to a backend check.
 - **v3 (Citus)** uses `dataProviderCodes` (an ISO country code) instead, which is
   filled in automatically when the client came from `find_reporter()`.
 

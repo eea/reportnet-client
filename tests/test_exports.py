@@ -376,3 +376,17 @@ def test_zip_to_frames_tolerates_an_empty_csv_member(client, mock_router):
     assert set(frames) == {"Empty", "Full"}
     assert frames["Empty"].shape == (0, 0)
     assert frames["Full"].shape == (1, 2)
+
+
+def test_etl_export_defaults_to_v4_when_the_backend_read_is_forbidden(mock_router, client):
+    """Same failure mode the import path guards against: a reporter-scoped key
+    cannot read /dataflow/v1/{id}, and the export must not die at that preflight
+    reporting the wrong URL."""
+    mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    route = mock_router.get("/dataset/v4/etlExport/1").mock(
+        return_value=httpx.Response(200, json=EXPORT_RESPONSE)
+    )
+    handle = client.for_dataflow(2, provider_id=64).etl_export(dataset_id=1)
+
+    assert route.call_count == 1
+    assert handle.job_id == 200
