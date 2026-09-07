@@ -45,3 +45,6 @@ REVIEW.md
 .vscode/
 *.swp
 site/
+
+# Local scratch notebooks (never committed; may hold credentials)
+notebooks/+_*
