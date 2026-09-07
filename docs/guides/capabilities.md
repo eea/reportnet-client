@@ -20,7 +20,7 @@ The role doesn't only change *what succeeds* — it changes how requests must be
 | Key role | `importFileData` on BigData |
 |---|---|
 | Custodian | `providerId` **present** → 403 |
-| Lead Reporter | `providerId` **absent** → 403 |
+| Reporter | `providerId` **absent** → 403 |
 
 The library handles this for you: it infers the role, and `import_file()`
 retries once with the opposite choice if the inference was wrong. You should
@@ -30,7 +30,7 @@ never need to pass `provider_id` yourself.
 
 Measured on a BigData dataflow:
 
-| | Lead Reporter | Custodian |
+| | Reporter | Custodian |
 |---|---|---|
 | Read dataset schemas | ✅ | ✅ |
 | Import data | ✅ | ✅ |
@@ -38,11 +38,13 @@ Measured on a BigData dataflow:
 | Check import status | ✅ | ✅ |
 | Delete own table data | ✅ | ✅ |
 | List dataset IDs | ❌ | ✅ |
-| Export / read data back | ❌ | ✅ |
+| Confirm an import landed (`verify_import`) | ✅ | ✅ |
+| Detect backend (`is_big_dataflow`) | ✅ | ✅ |
+| Export / read rows back | ❌ | ✅ |
 | Resolve codelists | ❌ | ✅ |
 | Release history | ❌ | ✅ |
 
-## Two consequences for Lead Reporters
+## Two consequences for Reporters
 
 **You cannot list your dataset IDs.** Only `GET /dataflow/v1/{id}` lists them,
 and reporter keys are forbidden from it. Take the ID from the web UI — it's in
@@ -53,7 +55,16 @@ Calls that need discovery raise
 [`DiscoveryNotPermittedError`][reportnet.DiscoveryNotPermittedError] — a
 subclass of `AuthError` carrying an actionable message rather than a bare 403.
 
-**You cannot read your data back.** Every export route is forbidden, so there
-is no programmatic way to confirm what an import wrote. Combined with the fact
-that [a FINISHED job is not evidence data landed](../api-notes.md), that means
-verifying a submission has to happen in the web UI.
+**You cannot read your rows back — but you can confirm an import landed.**
+Every export route is forbidden, so the data itself is unreadable. Import
+*statistics* are not, so use
+[`verify_import()`][reportnet.DataflowClient.verify_import]:
+
+```python
+it.verify_import(dataset_id=108953)["Reporter"]
+# {'records': 1, 'last_import': datetime(...), 'file_extension': 'csv'}
+```
+
+This matters because [a FINISHED job is not evidence data
+landed](../api-notes.md). Inspecting the rows themselves still has to happen in
+the web UI.

@@ -12,13 +12,13 @@ Licensed EUPL-1.2. The package is typed and ships `py.typed`.
 
 ### Who the library is for
 
-**Lead Reporters are the primary users** — they prepare and submit one
+**Reporters are the primary users** — they prepare and submit one
 country's or organisation's data. Custodians (dataflow admins) are secondary:
 supported, but they have dedicated tooling elsewhere. When designing an API or
 writing docs, the reporter path comes first and the custodian path is marked as
 admin.
 
-This matters technically, not just editorially: a Lead Reporter key **cannot**
+This matters technically, not just editorially: a Reporter key **cannot**
 list dataset IDs or export anything, so any feature routed through
 `GET /dataflow/v1/{id}` is custodian-only by construction. Check
 `flow.capabilities()` before assuming a call is available, and prefer designs
@@ -260,7 +260,7 @@ which is why guessing was replaced with a lookup.
 Two confirmed-live API quirks, both encoded in the code with comments:
 
 - **`providerId` on BigData depends on the key's ROLE, not the backend.**
-  Custodian-level keys are 403'd when it is *present*; Lead Reporter keys are
+  Custodian-level keys are 403'd when it is *present*; Reporter keys are
   403'd when it is *absent* (both verified live on 2003). No endpoint reports
   the role, so `_pid_bigdata_safe` infers it from whether the key may read
   `GET /dataflow/v1/{id}`, and `import_file` retries once with the opposite

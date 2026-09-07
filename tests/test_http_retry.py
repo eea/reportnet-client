@@ -274,7 +274,7 @@ def test_genuine_500_still_raises_api_error_and_is_retried(client):
 
 
 # ── ping() and reporter-scoped keys ───────────────────────────────────────────
-# A Lead Reporter key is 403'd on /dataflow/v1/{id} while being perfectly valid
+# A Reporter key is 403'd on /dataflow/v1/{id} while being perfectly valid
 # for the endpoints it owns. Reporting it as revoked is wrong and sends users
 # chasing a credential problem that doesn't exist. Verified live on 2003.
 

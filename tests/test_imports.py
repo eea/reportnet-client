@@ -217,7 +217,7 @@ def test_import_file_sends_provider_id_on_citus(mock_router, client):
 def test_import_file_works_when_the_dataflow_read_is_forbidden(mock_router, client):
     """A forbidden preflight means a reporter-scoped key, which NEEDS providerId.
 
-    Verified live on dataflow 2003: a Lead Reporter key is 403'd on
+    Verified live on dataflow 2003: a Reporter key is 403'd on
     /dataflow/v1/{id}, and its import is 403'd unless providerId is sent
     (job 248505 succeeded once it was).
     """

@@ -98,7 +98,7 @@ class DataflowClient:
         Key role               ``importFileData`` on BigData
         =====================  ==========================================
         Custodian-level        ``providerId`` present  -> 403
-        Lead Reporter          ``providerId`` absent   -> 403 (job 248505
+        Reporter          ``providerId`` absent   -> 403 (job 248505
                                succeeded once it was sent)
         =====================  ==========================================
 
@@ -219,7 +219,7 @@ class DataflowClient:
         return (
             f"This API key may not read dataflow {self._dataflow_id} "
             f"(GET /dataflow/v1/{self._dataflow_id} returned 403), which is the only "
-            f"endpoint that lists dataset IDs. This is normal for a Lead Reporter key. "
+            f"endpoint that lists dataset IDs. This is normal for a Reporter key. "
             f"Take the dataset ID from the Reportnet web UI — it is in the URL when you "
             f"open the dataset — and pass dataset_id= directly. Methods that need only a "
             f"dataset ID (get_schema, import_file, validate) work normally."
@@ -398,10 +398,10 @@ class DataflowClient:
         """POST /dataset/v2/importFileData/{datasetId} — multipart upload.
 
         Whether BigData wants ``providerId`` depends on the key's role, not the
-        backend: a custodian-level key is 403'd when it is present, a Lead
-        Reporter key when it is absent. :meth:`_pid_bigdata_safe` infers the
-        role, and this method **retries once with the opposite choice** if the
-        inference was wrong.
+        backend: a custodian-level key is 403'd when it is present, a Reporter
+        key when it is absent. :meth:`_pid_bigdata_safe` infers the role, and
+        this method **retries once with the opposite choice** if the inference
+        was wrong.
 
         The retry is safe: a 403 means the request was rejected outright, so
         nothing was written and no duplicate can result. Passing
@@ -439,6 +439,51 @@ class DataflowClient:
                 dataset_id, pid, alternative,
             )
             return _send(alternative)
+
+    def verify_import(self, *, dataset_id: int) -> dict[str, dict[str, object]]:
+        """Return what the last import actually wrote, keyed by **table name**.
+
+        A FINISHED job is not evidence that data landed — Reportnet can accept
+        a request, run it, report FINISHED and write nothing. This reads
+        ``getImportRelatedStatistics`` and joins it to the dataset schema, so
+        you get table names instead of schema IDs.
+
+        Works with reporter-scoped keys, which cannot export and therefore have
+        no other way to confirm an import.
+
+        Returns:
+            ``{table_name: {"records": int | None, "last_import": datetime | None,
+            "file_extension": str | None}}``, one entry per table in the
+            schema. ``records`` is ``None`` for tables never imported into.
+
+        Example::
+
+            it.import_file(dataset_id=108953, file=df, table_schema_id=tid).wait()
+            it.verify_import(dataset_id=108953)["Reporter"]
+            # {'records': 1, 'last_import': datetime(...), 'file_extension': 'csv'}
+        """
+        from datetime import datetime, timezone
+
+        stats = self._client.get_import_statistics(
+            dataset_id=dataset_id, dataflow_id=self._dataflow_id
+        )
+        schema = self.get_schema(dataset_id=dataset_id)
+
+        def _when(raw: object) -> "datetime | None":
+            # The API reports epoch milliseconds.
+            if not isinstance(raw, (int, float)):
+                return None
+            return datetime.fromtimestamp(raw / 1000, tz=timezone.utc)
+
+        result: dict[str, dict[str, object]] = {}
+        for table in schema.tables:
+            entry = stats.get(table.id) or {}
+            result[table.name] = {
+                "records": entry.get("numberOfRecordsImported"),
+                "last_import": _when(entry.get("lastImportDate")),
+                "file_extension": entry.get("fileExtension"),
+            }
+        return result
 
     def import_frames(
         self,

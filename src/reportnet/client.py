@@ -117,10 +117,10 @@ class ReportnetClient:
         Raises on network errors, so transient connectivity issues surface as
         exceptions rather than a silent False.
 
-        A 403 is **not** treated as a bad key. Reporter-scoped keys (a Lead
-        Reporter, say) are forbidden from ``GET /dataflow/v1/{id}`` while being
-        perfectly valid for the endpoints they do own — verified live on
-        dataflow 2003, where a Lead Reporter key 403s here yet imports
+        A 403 is **not** treated as a bad key. Reporter-scoped keys are
+        forbidden from ``GET /dataflow/v1/{id}`` while being perfectly valid
+        for the endpoints they do own — verified live on
+        dataflow 2003, where a Reporter key 403s here yet imports
         successfully. Reporting such a key as revoked sends users chasing a
         credential problem that doesn't exist, so this falls back to the
         representatives endpoint before giving up.
@@ -162,7 +162,7 @@ class ReportnetClient:
         """Probe what this API key is allowed to do on *dataflow_id*.
 
         Reportnet has no endpoint reporting a key's role, and the role changes
-        how requests must be *built* — a Lead Reporter key must send
+        how requests must be *built* — a Reporter key must send
         ``providerId`` on BigData writes, a custodian key is refused if it
         does. So the library probes: at most two cheap GETs, cached per client.
 
@@ -252,6 +252,43 @@ class ReportnetClient:
         """
         return list(self.get_dataflow_contents(dataflow_id=dataflow_id).test_datasets)
 
+    def get_dataflow_metabase(self, *, dataflow_id: int) -> DataflowInfo:
+        """GET /dataflow/v1/{dataflowId}/getmetabase — dataflow metadata only.
+
+        Returns the same fields as :meth:`get_dataflow` but **without** any
+        dataset lists (the API nulls them here). Its value is that reporter
+        keys may read it, while ``GET /dataflow/v1/{id}`` is 403 for them — so
+        it is how a reporter learns the dataflow's name, status and backend.
+        """
+        response = self._http.get(f"/dataflow/v1/{dataflow_id}/getmetabase")
+        return DataflowInfo.from_dict(response.json())
+
+    def get_import_statistics(self, *, dataset_id: int, dataflow_id: int) -> dict[str, Any]:
+        """GET /dataset/getImportRelatedStatistics/{datasetId} — what landed.
+
+        Returns a mapping of **table schema id** to
+        ``{"lastImportDate", "numberOfRecordsImported", "fileExtension"}``,
+        with nulls for tables never imported into.
+
+        This is the only way a reporter-scoped key can confirm an import
+        actually wrote data: exports are forbidden to them, and a FINISHED job
+        is not evidence that data landed. Use
+        :meth:`DataflowClient.verify_import <reportnet.DataflowClient.verify_import>`
+        for a table-name-friendly wrapper.
+
+        Example::
+
+            stats = client.get_import_statistics(dataset_id=108953, dataflow_id=2003)
+            stats["6a4504d0bde8560001232b6d"]
+            # {'lastImportDate': 1788769100000, 'numberOfRecordsImported': 1,
+            #  'fileExtension': 'csv'}
+        """
+        response = self._http.get(
+            f"/dataset/getImportRelatedStatistics/{dataset_id}",
+            params={"dataflowId": dataflow_id},
+        )
+        return response.json()  # type: ignore[no-any-return]
+
     def is_big_dataflow(self, *, dataflow_id: int) -> bool:
         """Return True if *dataflow_id* is a BigData (DLT2) dataflow.
 
@@ -260,11 +297,26 @@ class ReportnetClient:
         looks purpose-built for this but 404s for API-key auth regardless of
         the dataflow's actual BigData status, so it isn't used here.
 
+        Reporter-scoped keys are 403 on that endpoint, so this falls back to
+        ``getmetabase``, which they *can* read and which carries the same
+        ``bigData`` field. That makes backend detection work for every key.
+
         Cached per client — a dataflow never changes backend.
         """
+        from .exceptions import AuthError
+
         cached = self._big_data_cache.get(dataflow_id)
-        if cached is None:
+        if cached is not None:
+            return cached
+        try:
             cached = self.get_dataflow_contents(dataflow_id=dataflow_id).info.big_data
+        except AuthError:
+            logger.debug(
+                "dataflow %s not readable; reading bigData from getmetabase instead",
+                dataflow_id,
+            )
+            cached = self.get_dataflow_metabase(dataflow_id=dataflow_id).big_data
+            self._big_data_cache[dataflow_id] = cached
         return cached
 
     def close(self) -> None:

@@ -225,7 +225,7 @@ class Capabilities:
     Reportnet grants permissions per *key role*, and the API has no endpoint
     that reports the role — so this is probed. The distinction matters because
     it changes how requests must be built, not just what succeeds:
-    a Lead Reporter key **must** send ``providerId`` when importing, while a
+    a Reporter key **must** send ``providerId`` when importing, while a
     custodian key is refused if it does.
 
     Obtained from :meth:`~reportnet.DataflowClient.capabilities`; cached, since
@@ -274,7 +274,7 @@ class Capabilities:
     def wants_provider_id(self) -> bool:
         """True if BigData writes must carry ``providerId``.
 
-        Verified live on dataflow 2003: a Lead Reporter key is refused without
+        Verified live on dataflow 2003: a Reporter key is refused without
         it, a custodian key is refused with it.
         """
         return self.role == "reporter"

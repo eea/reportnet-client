@@ -117,6 +117,11 @@ def test_validate_falls_back_when_backend_is_unreadable(mock_router, client):
     still work rather than failing on the backend lookup."""
     _mock_validation_job(mock_router)
     mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    # is_big_dataflow() falls back to getmetabase, which reporter keys can read;
+    # 403 it too so the backend really is undeterminable and the fallback runs.
+    mock_router.get("/dataflow/v1/2/getmetabase").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
     dl = mock_router.get("/validation/listGroupValidationsDL/1").mock(
         return_value=httpx.Response(404, text="not this backend")
     )
@@ -135,6 +140,11 @@ def test_validate_propagates_auth_error_from_the_listing_call(mock_router, clien
     """A 403 on the dataflow read must not mask a genuine 403 on validation."""
     _mock_validation_job(mock_router)
     mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    # is_big_dataflow() falls back to getmetabase, which reporter keys can read;
+    # 403 it too so the backend really is undeterminable and the fallback runs.
+    mock_router.get("/dataflow/v1/2/getmetabase").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
     mock_router.get("/validation/listGroupValidationsDL/1").mock(
         return_value=httpx.Response(403, text="Forbidden")
     )

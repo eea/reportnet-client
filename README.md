@@ -12,7 +12,7 @@ Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.e
 
 ## Who this is for
 
-This library is built for **Lead Reporters** — the people at a country or
+This library is built for **Reporters** — the people at a country or
 organisation who prepare and submit data for a reporting obligation. That
 workflow is the one it optimises for:
 
@@ -27,9 +27,9 @@ But custodians already have dedicated tooling, so their needs are secondary
 here.
 
 **Your key's role changes what works, and how.** Reportnet grants permissions
-per key, and a Lead Reporter key genuinely cannot do some things a custodian
+per key, and a Reporter key genuinely cannot do some things a custodian
 key can. The library detects this and tells you — see
-[What your key can do](#what-your-key-can-do). Notably, a Lead Reporter key
+[What your key can do](#what-your-key-can-do). Notably, a Reporter key
 cannot list dataset IDs, so you take them from the web UI.
 
 The package is fully type-annotated and ships a
@@ -38,7 +38,7 @@ check your calls against it.
 
 ## Contents
 
-**Lead Reporter workflow**
+**Reporter workflow**
 - [Installation](#installation)
 - [Setup: your API key](#setup-your-api-key)
 - [What your key can do](#what-your-key-can-do)
@@ -117,20 +117,22 @@ print(caps.summary())
 # "dataflow 2003: reporter key; cannot discover dataset IDs"
 
 caps.role                    # "custodian" | "reporter" | "none"
-caps.can_discover_datasets   # False for Lead Reporter keys
-caps.wants_provider_id       # True for Lead Reporter keys
+caps.can_discover_datasets   # False for Reporter keys
+caps.wants_provider_id       # True for Reporter keys
 ```
 
-Measured on a BigData dataflow with a Lead Reporter key:
+Measured on a BigData dataflow with a Reporter key:
 
-| | Lead Reporter | Custodian |
+| | Reporter | Custodian |
 |---|---|---|
 | Read dataset schemas | ✅ | ✅ |
 | Import data | ✅ | ✅ |
 | Validate and read results | ✅ | ✅ |
 | Check import status | ✅ | ✅ |
 | **List dataset IDs** | ❌ take from web UI | ✅ |
-| **Export / read data back** | ❌ | ✅ |
+| **Export / read rows back** | ❌ | ✅ |
+| Confirm an import landed (`verify_import`) | ✅ | ✅ |
+| Detect the backend (`is_big_dataflow`) | ✅ | ✅ |
 | Resolve codelists | ❌ (needs export) | ✅ |
 | Release history | ❌ | ✅ |
 
@@ -140,7 +142,7 @@ message rather than a bare `403` when you hit one of these.
 
 ## Step 1 — Find your dataset
 
-**With a Lead Reporter key, take the dataset ID from the web UI.** Open your
+**With a Reporter key, take the dataset ID from the web UI.** Open your
 dataset in Reportnet; the ID is in the URL:
 
 ```
@@ -192,7 +194,7 @@ print(templates["Reporter"].dtypes)
 
 Numeric, date and boolean columns are always typed. `LINK`/`CODELIST` columns
 become `pl.Enum` (polars) or `CategoricalDtype` (pandas) **only if the codelists
-can be resolved**, which requires export rights — so with a Lead Reporter key
+can be resolved**, which requires export rights — so with a Reporter key
 they stay plain strings and you get a warning saying so. Pass `strict=True` to
 make that an error instead:
 
@@ -251,10 +253,21 @@ Multiple tables at once:
 it.import_frames(dataset_id=DATASET_ID, frames={"Reporter": df1, "Contacts": df2})
 ```
 
-> **A FINISHED job does not prove the data landed.** Reportnet can accept a
-> request, run it, report FINISHED and write nothing — for example when records
-> are missing a required `countryCode`. With a Lead Reporter key you cannot
-> export to check, so confirm in the web UI.
+### Confirm it actually landed
+
+**A FINISHED job does not prove the data was written.** Reportnet can accept a
+request, run it, report FINISHED and write nothing — for example when records
+are missing a required `countryCode`. Always check:
+
+```python
+it.verify_import(dataset_id=DATASET_ID)["Reporter"]
+# {'records': 1, 'last_import': datetime(2026, 9, 7, 8, 18, 20, tzinfo=utc),
+#  'file_extension': 'csv'}
+```
+
+`records` is `None` for tables never imported into. This works with a Reporter
+key — it reads import statistics rather than exporting, so it's available even
+though exports are not.
 
 ## Step 5 — Validate
 
@@ -298,7 +311,7 @@ which, when your key can read it.
 
 ## Export data
 
-Requires export rights — **not available to Lead Reporter keys** on the
+Requires export rights — **not available to Reporter keys** on the
 dataflows measured so far.
 
 ```python

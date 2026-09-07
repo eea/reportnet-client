@@ -383,6 +383,11 @@ def test_etl_export_defaults_to_v4_when_the_backend_read_is_forbidden(mock_route
     cannot read /dataflow/v1/{id}, and the export must not die at that preflight
     reporting the wrong URL."""
     mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    # getmetabase normally rescues backend detection for reporter keys; 403 it
+    # too so the version-selection guard itself is what gets exercised.
+    mock_router.get("/dataflow/v1/2/getmetabase").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
     route = mock_router.get("/dataset/v4/etlExport/1").mock(
         return_value=httpx.Response(200, json=EXPORT_RESPONSE)
     )

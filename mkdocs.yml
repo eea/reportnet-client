@@ -42,7 +42,7 @@ plugins:
 nav:
   - Home: index.md
   - Concepts: concepts.md
-  - Lead Reporter guide:
+  - Reporter guide:
     - What your key can do: guides/capabilities.md
     - Dataset schema: guides/schema.md
     - Import data: guides/import.md

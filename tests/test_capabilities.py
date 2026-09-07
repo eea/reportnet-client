@@ -20,7 +20,7 @@ def _custodian(router):
 
 
 def _reporter(router):
-    """A Lead Reporter key: 403 on the dataflow, readable representatives."""
+    """A Reporter key: 403 on the dataflow, readable representatives."""
     router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
     router.get("/representative/v1/dataflow/2").mock(return_value=httpx.Response(200, json=[]))
 
@@ -82,7 +82,7 @@ def test_discovery_raises_an_actionable_error_for_reporter_keys(mock_router, cli
     with pytest.raises(DiscoveryNotPermittedError) as excinfo:
         client.for_dataflow(2).for_provider(64).dataset("Table1a")
     msg = str(excinfo.value)
-    assert "Lead Reporter" in msg
+    assert "Reporter" in msg
     assert "web UI" in msg
     assert "dataset_id=" in msg
 
@@ -109,3 +109,46 @@ def test_schema_and_import_still_work_for_reporter_keys(mock_router, client):
     assert it.get_schema(dataset_id=100).name == "D"
     it.import_file(dataset_id=100, file=b"a|b\n1|2\n")
     assert route.calls[0].request.url.params["providerId"] == "64"
+
+
+# ── Reporter-usable verification and backend detection ────────────────────────
+# Exports are forbidden to reporter keys, so verify_import() reads import
+# statistics instead — the only way such a key can confirm data landed.
+
+SCHEMA = {"idDataSetSchema": "s", "nameDatasetSchema": "D", "tableSchemas": [
+    {"idTableSchema": "tbl-a", "nameTableSchema": "Reporter",
+     "recordSchema": {"fieldSchema": []}},
+    {"idTableSchema": "tbl-b", "nameTableSchema": "Contacts",
+     "recordSchema": {"fieldSchema": []}}]}
+
+
+def test_verify_import_reports_rows_per_table_name(mock_router, client):
+    _reporter(mock_router)
+    mock_router.get("/dataschema/v1/datasetId/100").mock(
+        return_value=httpx.Response(200, json=SCHEMA)
+    )
+    mock_router.get("/dataset/getImportRelatedStatistics/100").mock(
+        return_value=httpx.Response(200, json={
+            "tbl-a": {"lastImportDate": 1788769100000,
+                      "numberOfRecordsImported": 3, "fileExtension": "csv"},
+            "tbl-b": {"lastImportDate": None,
+                      "numberOfRecordsImported": None, "fileExtension": None}})
+    )
+    got = client.for_dataflow(2).for_provider(64).verify_import(dataset_id=100)
+
+    assert got["Reporter"]["records"] == 3
+    assert got["Reporter"]["file_extension"] == "csv"
+    assert got["Reporter"]["last_import"].year == 2026
+    assert got["Contacts"]["records"] is None, "never-imported tables report None"
+    assert got["Contacts"]["last_import"] is None
+
+
+def test_is_big_dataflow_falls_back_to_getmetabase_for_reporter_keys(mock_router, client):
+    """Reporter keys are 403 on /dataflow/v1/{id} but may read getmetabase,
+    which carries the same bigData field."""
+    _reporter(mock_router)
+    route = mock_router.get("/dataflow/v1/2/getmetabase").mock(
+        return_value=httpx.Response(200, json={"id": 2, "name": "df", "bigData": True})
+    )
+    assert client.for_dataflow(2).is_big_dataflow() is True
+    assert route.call_count == 1

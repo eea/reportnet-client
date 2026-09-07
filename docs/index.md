@@ -49,7 +49,7 @@ frames = ie.etl_export(dataset_id=ds.id).to_frames()
 
 ## Who this is for
 
-This library is built for **Lead Reporters** — the people who prepare and
+This library is built for **Reporters** — the people who prepare and
 submit a country's or organisation's data. **Custodians** (dataflow admins) can
 use it too and unlock extra capabilities, but they have dedicated tooling
 elsewhere, so their needs are secondary here.
@@ -59,7 +59,7 @@ elsewhere, so their needs are secondary here.
 The guides follow the order you'd actually work in:
 
 1. **[What your key can do](guides/capabilities.md)** — your key's role decides
-   what works. Start here; it explains why a Lead Reporter takes dataset IDs
+   what works. Start here; it explains why a Reporter takes dataset IDs
    from the web UI.
 2. **[Dataset schema](guides/schema.md)** — the tables, fields and codelists
    you must match, plus typed DataFrame templates.
