@@ -35,7 +35,7 @@ this guide is written for reporters.
 - [The whole workflow](#the-whole-workflow) — a complete example
 - **Step by step:** [Connect](#step-1--connect) · [Find your dataset](#step-2--find-your-dataset) · [Read the schema](#step-3--read-the-schema) · [Prepare your data](#step-4--prepare-your-data) · [Upload](#step-5--upload) · [Check it landed](#step-6--check-it-landed) · [Validate](#step-7--validate) · [Release](#step-8--release)
 - [When something goes wrong](#when-something-goes-wrong) · [What your key can do](#what-your-key-can-do)
-- [Spatial data](#spatial-data) · [Seeing what's happening](#seeing-whats-happening)
+- [Download your data back](#download-your-data-back) · [Seeing what's happening](#seeing-whats-happening)
 - [Custodian tasks (admin)](#custodian-tasks-admin)
 - [Development](#development) · [Changelog](#changelog) · [Licence](#licence)
 
@@ -286,7 +286,7 @@ Common situations:
 | "not authorised" when listing datasets | Normal for a reporter key — get the ID from the website |
 | Dataset locked | A validation or import is still running |
 | Upload finished but `records` is 0 | Rows were rejected — check mandatory columns |
-| Code-list columns accept anything | Your key can't read the code lists; values are checked at validation instead |
+| Code-list columns accept anything | Your key can't read the shared code lists; values are checked at validation instead |
 
 Temporary network problems are retried automatically.
 
@@ -307,26 +307,36 @@ print(flow.capabilities().summary())
 | Confirm an upload landed | ✅ | ✅ |
 | Validate and read results | ✅ | ✅ |
 | Look up your country by code | ✅ | ✅ |
+| Download your own data back out | ✅ | ✅ |
 | List dataset IDs | website only | ✅ |
-| Download data back out | ❌ | ✅ |
-| Fill in code lists automatically | ❌ | ✅ |
+| Download shared code lists | ❌ | ✅ |
+| Fill in code-list columns automatically | ❌ | ✅ |
 
 None of the ❌ rows are faults — they're how Reportnet assigns permissions.
 
-## Spatial data
+## Download your data back
 
-If your dataset has map geometry, it converts to a GeoDataFrame in one step
-(needs the `spatial` extra):
+You can read your own dataset back out — useful to check what Reportnet
+actually holds, or to start from last year's submission:
 
 ```python
-data = flow.etl_export(dataset_id=DATASET_ID).to_frames()
-gdf = reportnet.to_geodataframe(data["ProtectedArea"], "geometry_polygon")
+tables = me.etl_export(dataset_id=DATASET_ID).to_frames()
+tables["Contacts"]        # a normal DataFrame
+```
+
+This runs in the background and can take a few minutes on a large dataset.
+
+### Spatial data
+
+If your data has map geometry, it converts to a GeoDataFrame in one step (needs
+the `spatial` extra):
+
+```python
+gdf = reportnet.to_geodataframe(tables["ProtectedArea"], "geometry_polygon")
 gdf.plot()
 ```
 
 You can upload a GeoDataFrame straight back with `import_file()`.
-
-Note that downloading requires administrator permissions.
 
 ## Seeing what's happening
 
@@ -362,12 +372,10 @@ flow.dataset("Contacts")           # look datasets up by name
 flow.to_mermaid()                  # diagram coloured by submission status
 ```
 
-Downloading data, managing shared code lists, and reading release history are
-also administrator-only:
+Managing shared code lists and reading release history are administrator-only
+(reporters can export their own data, but not the shared reference datasets):
 
 ```python
-frames = flow.etl_export(dataset_id=DATASET_ID).to_frames()
-
 ref = flow.reference_dataset("codelist")
 flow.import_file(dataset_id=ref.id, file="codelists.csv", replace=True)
 flow.set_reference_dataset_updatable(dataset_id=ref.id, updatable=False)

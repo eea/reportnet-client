@@ -408,8 +408,6 @@ class DataflowClient:
         ``provider_id`` explicitly disables it — an explicit choice is
         honoured, not second-guessed.
         """
-        pid = self._pid_bigdata_safe(provider_id)
-
         def _send(with_pid: int | None) -> JobHandle:
             return self._client.import_file(
                 dataset_id=dataset_id,
@@ -423,22 +421,43 @@ class DataflowClient:
                 integration_id=integration_id,
             )
 
+        return self._send_with_provider_id(
+            _send, override=provider_id, what=f"import into dataset {dataset_id}"
+        )
+
+    def _send_with_provider_id(
+        self,
+        send: "Callable[[int | None], JobHandle]",
+        *,
+        override: int | None,
+        what: str,
+    ) -> JobHandle:
+        """Call *send* with the right ``providerId``, flipping once on a 403.
+
+        Whether Reportnet requires or rejects ``providerId`` depends on the
+        key's role, which cannot be queried directly — see
+        :meth:`_pid_bigdata_safe`. When the inferred choice is refused, the
+        opposite is tried. That is safe because a 403 means the request was
+        rejected outright, so nothing happened and no duplicate can result.
+
+        An explicit *override* is honoured and never second-guessed.
+        """
+        pid = self._pid_bigdata_safe(override)
         try:
-            return _send(pid)
+            return send(pid)
         except AuthError:
             # Only the auto-filled case is ambiguous enough to retry.
-            if provider_id is not None or self._provider_id is None:
+            if override is not None or self._provider_id is None:
                 raise
             alternative = None if pid is not None else self._provider_id
             if alternative == pid:
                 raise
             logger.warning(
-                "import into dataset %s was refused with providerId=%s; retrying with "
-                "providerId=%s — whether BigData requires or rejects it depends on "
-                "the key's role",
-                dataset_id, pid, alternative,
+                "%s was refused with providerId=%s; retrying with providerId=%s — "
+                "whether Reportnet requires or rejects it depends on the key's role",
+                what, pid, alternative,
             )
-            return _send(alternative)
+            return send(alternative)
 
     def verify_import(self, *, dataset_id: int) -> dict[str, dict[str, object]]:
         """Return what the last import actually wrote, keyed by **table name**.
@@ -628,16 +647,25 @@ class DataflowClient:
         # v4/v5 (BigData) reject providerId outright (403) for reporter-level
         # keys, so — unlike other methods — it is never auto-filled from the
         # stored provider_id here; only an explicit override is forwarded.
+        # v3 also accepts dataProviderCodes as a *filter*, but it does not
+        # authorise the call on its own — verified live: dataProviderCodes
+        # alone is 403, providerId alone succeeds.
         dpc = data_provider_codes or (self._country_code if version == 3 else None)
-        pid = provider_id if version != 3 else None
-        return self._client.etl_export(
-            dataset_id=dataset_id,
-            dataflow_id=self._dataflow_id,
-            provider_id=pid,
-            data_provider_codes=dpc,
-            table_schema_id=table_schema_id,
-            include_attachments=include_attachments,
-            version=version,
+        resolved_version = version
+
+        def _send(with_pid: int | None) -> JobHandle:
+            return self._client.etl_export(
+                dataset_id=dataset_id,
+                dataflow_id=self._dataflow_id,
+                provider_id=with_pid,
+                data_provider_codes=dpc,
+                table_schema_id=table_schema_id,
+                include_attachments=include_attachments,
+                version=resolved_version,
+            )
+
+        return self._send_with_provider_id(
+            _send, override=provider_id, what=f"export of dataset {dataset_id}"
         )
 
     def export_file(

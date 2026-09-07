@@ -388,6 +388,9 @@ def test_etl_export_defaults_to_v4_when_the_backend_read_is_forbidden(mock_route
     mock_router.get("/dataflow/v1/2/getmetabase").mock(
         return_value=httpx.Response(403, text="Forbidden")
     )
+    mock_router.get("/representative/v1/dataflow/2").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     route = mock_router.get("/dataset/v4/etlExport/1").mock(
         return_value=httpx.Response(200, json=EXPORT_RESPONSE)
     )

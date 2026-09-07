@@ -259,12 +259,22 @@ which is why guessing was replaced with a lookup.
 
 Two confirmed-live API quirks, both encoded in the code with comments:
 
-- **`providerId` on BigData depends on the key's ROLE, not the backend.**
-  Custodian-level keys are 403'd when it is *present*; Reporter keys are
-  403'd when it is *absent* (both verified live on 2003). No endpoint reports
-  the role, so `_pid_bigdata_safe` infers it from whether the key may read
-  `GET /dataflow/v1/{id}`, and `import_file` retries once with the opposite
-  choice. Don't "simplify" this back to a backend check.
+- **`providerId` depends on the key's ROLE, not the backend, and applies to
+  BOTH `importFileData` and `etlExport`.** Custodian-level keys are 403'd when
+  it is *present*; reporter keys when it is *absent* (both verified live on
+  2003). No endpoint reports the role, so `_pid_bigdata_safe` infers it from
+  whether the key may read `GET /dataflow/v1/{id}`, and both `import_file` and
+  `etl_export` go through `_send_with_provider_id`, which retries once with the
+  opposite choice. Don't "simplify" this back to a backend check, and don't
+  reintroduce the old rule that exports never auto-fill `providerId` — that
+  made exports impossible for reporters.
+  `dataProviderCodes` is a *filter*, not an authorisation: alone it 403s.
+
+- **Swagger operation `description` fields carry per-role permission tables**
+  (which roles may call an endpoint, per dataset type). They are authoritative
+  and explain observed 403s exactly — e.g. reporters may export a *reporting*
+  dataset but not a *reference* one. Check them before concluding a role can't
+  do something; see `docs/api-notes.md`.
 - **v3 (Citus)** uses `dataProviderCodes` (an ISO country code) instead, which is
   filled in automatically when the client came from `find_reporter()`.
 

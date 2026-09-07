@@ -40,7 +40,8 @@ Measured on a BigData dataflow:
 | List dataset IDs | ❌ | ✅ |
 | Confirm an import landed (`verify_import`) | ✅ | ✅ |
 | Detect backend (`is_big_dataflow`) | ✅ | ✅ |
-| Export / read rows back | ❌ | ✅ |
+| Export your own reporting dataset | ✅ | ✅ |
+| Export reference / EU / data-collection datasets | ❌ | ✅ |
 | Resolve codelists | ❌ | ✅ |
 | Release history | ❌ | ✅ |
 
@@ -55,10 +56,13 @@ Calls that need discovery raise
 [`DiscoveryNotPermittedError`][reportnet.DiscoveryNotPermittedError] — a
 subclass of `AuthError` carrying an actionable message rather than a bare 403.
 
-**You cannot read your rows back — but you can confirm an import landed.**
-Every export route is forbidden, so the data itself is unreadable. Import
-*statistics* are not, so use
-[`verify_import()`][reportnet.DataflowClient.verify_import]:
+**You can read your own data back, but not the shared reference datasets.**
+Exporting your reporting dataset works; the code lists it links to do not.
+That is why code-list columns come back as plain strings.
+
+For a quick check after an upload, prefer
+[`verify_import()`][reportnet.DataflowClient.verify_import] over a full export
+— it is one request rather than a multi-minute job:
 
 ```python
 it.verify_import(dataset_id=108953)["Reporter"]

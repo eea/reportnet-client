@@ -123,10 +123,21 @@ This was previously recorded here as "BigData rejects `providerId`". That is
 only half true, and the missing half makes imports impossible for the role most
 likely to be doing them. Both directions are confirmed live on dataflow 2003:
 
-| Key role | `POST /dataset/v2/importFileData/{id}` |
+| Key role | `importFileData` **and** `etlExport` |
 |---|---|
 | Custodian-level | `providerId` **present** → 403 |
 | Reporter | `providerId` **absent** → 403 |
+
+Isolated on `etlExport` for a reporter key, v3 and v4 alike:
+
+| Parameters sent | Result |
+|---|---|
+| `providerId` (with or without `dataProviderCodes`) | **200** |
+| `dataProviderCodes` only | 403 |
+| neither | 403 |
+
+So `dataProviderCodes` is a *filter*, not an authorisation — only `providerId`
+grants the call.
 
 A Reporter key for IT (provider 64) was refused without `providerId` and
 accepted with it — job 248505 ran to FINISHED.
@@ -159,7 +170,10 @@ Measured on dataflow 2003 (BigData) with a Reporter key for IT:
 | `PUT /orchestrator/jobs/addValidationJob/{id}` + `listGroupValidationsDL` | ✅ |
 | `DELETE /dataset/v1/{id}/deleteTableData/{tableSchemaId}` | ✅ |
 | `GET /dataflow/v1/{id}` | ❌ 403 |
-| **Every export route** — `etlExport` v1/v2/v3/v4/v5, `exportFile`, `exportFileDL` | ❌ 403 |
+| `GET /dataset/v{3,4,5}/etlExport/{id}` on its **own reporting dataset**, **with** `providerId` | ✅ |
+| The same export **without** `providerId` | ❌ 403 |
+| Exporting **reference / EU / data-collection / test** datasets | ❌ 403 (role table forbids it) |
+| `exportFile`, `exportFileDL` | ❌ 403 |
 | `etlImport`, v1 `importFileData`, `generateImportPresignedUrl` | ❌ 403 |
 | `getSimpleSchema`, `getTableSchemasIds`, `list-imported-files`, `preparations` | ❌ 403 |
 | `snapshot/v1/historicReleases`, `document/v1/dataflow/{id}`, `weblink/v1/dataflow/{id}` | ❌ 403 |
@@ -172,14 +186,16 @@ Two consequences worth designing around:
 1. **A reporter cannot discover its own dataset IDs.** The only wrapped source
    is `GET /dataflow/v1/{id}`, which is 403. The representatives endpoint
    returns `hasDatasets: true` but no IDs. IDs must come from the web UI.
-2. **A reporter cannot read its data back, but *can* confirm an import
-   landed.** Every export route is forbidden, so the rows themselves are
-   unreadable. However `GET /dataset/getImportRelatedStatistics/{id}` is
-   permitted and returns, per table schema id,
+2. **A reporter *can* export its own reporting dataset** — provided
+   `providerId` is sent. It cannot export reference, EU, data-collection or
+   test datasets; the role tables (below) forbid those.
+
+   Independently, `GET /dataset/getImportRelatedStatistics/{id}` gives per-table
    `{"lastImportDate", "numberOfRecordsImported", "fileExtension"}`. Since a
-   FINISHED job is *not* evidence that data landed, this is the check that
-   matters — wrapped as
-   [`verify_import()`][reportnet.DataflowClient.verify_import].
+   FINISHED job is *not* evidence that data landed, that is the cheap check
+   after an upload — wrapped as
+   [`verify_import()`][reportnet.DataflowClient.verify_import] — while a full
+   export is the expensive one.
 
 ## Response quirks
 
@@ -287,3 +303,34 @@ PY
 ```
 
 No API key is needed — the spec endpoints are public.
+
+
+## Swagger descriptions carry authoritative role tables
+
+Each operation's `description` field lists the roles allowed **per dataset
+type**. This is the closest thing to an authoritative permission model the API
+publishes, and it is not visible in the endpoint list — only in the operation
+detail. For example `GET /dataset/v4/etlExport/{datasetId}`:
+
+| Dataset type | Allowed roles |
+|---|---|
+| Reporting | CUSTODIAN, STEWARD, OBSERVER, REPORTER WRITE, REPORTER READ, LEAD REPORTER, STEWARD SUPPORT |
+| Test | CUSTODIAN, STEWARD, STEWARD SUPPORT |
+| Reference | CUSTODIAN, STEWARD, OBSERVER, STEWARD SUPPORT |
+| Design | CUSTODIAN, STEWARD, EDITOR WRITE, EDITOR READ |
+| EU | CUSTODIAN, STEWARD, OBSERVER, STEWARD SUPPORT |
+| Data collection | CUSTODIAN, STEWARD, OBSERVER, STEWARD SUPPORT |
+
+That table explains observed behaviour exactly: a reporter can export its own
+*reporting* dataset but not a *reference* one. `importFileData` has its own
+table (Reporting: LEAD REPORTER, REPORTER WRITE, NATIONAL COORDINATOR).
+
+**Read these before concluding a role cannot do something.** Extract them with:
+
+```bash
+curl -s https://api.reportnet.europa.eu/dataset/v2/api-docs | python3 -c "
+import json,sys
+spec=json.load(sys.stdin)
+for m,op in spec['paths']['/dataset/v4/etlExport/{datasetId}'].items():
+    print(op.get('description',''))"
+```
