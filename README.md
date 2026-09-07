@@ -4,470 +4,395 @@
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 [![Licence: EUPL-1.2](https://img.shields.io/badge/licence-EUPL--1.2-blue)](LICENSE)
 
-> **Beta** — the client may change and requires more testing before version 1.0.
+> **Beta** — the client may change before version 1.0.
 
-Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.eu/rest-api/).
+Prepare, upload and validate your country's data for
+[EEA Reportnet 3](https://reportnet.europa.eu) from Python, instead of clicking
+through the web interface.
 
 **[Full documentation](https://eea.github.io/reportnet-client/)**
 
 ## Who this is for
 
-This library is built for **Reporters** — the people at a country or
-organisation who prepare and submit data for a reporting obligation. That
-workflow is the one it optimises for:
+**Reporters** — the people at a country or organisation who prepare and submit
+data for a reporting obligation. Your whole job looks like this:
 
 ```
-find your dataset  →  read its schema  →  build data  →  import  →  validate  →  fix  →  Release
-└──────────────────────────── this library ────────────────────────────────┘   └── web UI ──┘
+connect  →  read the schema  →  prepare data  →  upload  →  validate  →  fix  →  Release
+└─────────────────────── you can script all of this ──────────────────┘  └── web UI ──┘
 ```
 
-**Custodians** (dataflow administrators) can use it too, and get extra
-capabilities their role unlocks — see [Custodian tasks](#custodian-tasks-admin).
-But custodians already have dedicated tooling, so their needs are secondary
-here.
+The last step stays in the browser: Reportnet has no way to submit a dataset
+from code, so a person always presses **Release**.
 
-**Your key's role changes what works, and how.** Reportnet grants permissions
-per key, and a Reporter key genuinely cannot do some things a custodian
-key can. The library detects this and tells you — see
-[What your key can do](#what-your-key-can-do). Notably, a Reporter key
-cannot list dataset IDs, so you take them from the web UI.
-
-The package is fully type-annotated and ships a
-[PEP 561](https://peps.python.org/pep-0561/) marker, so `mypy` and `pyright`
-check your calls against it.
+**Custodians** (dataflow administrators) can use the library too — see
+[Custodian tasks](#custodian-tasks-admin) — but they have their own tooling, so
+this guide is written for reporters.
 
 ## Contents
 
-**Reporter workflow**
-- [Installation](#installation)
-- [Setup: your API key](#setup-your-api-key)
-- [What your key can do](#what-your-key-can-do)
-- [Step 1 — Find your dataset](#step-1--find-your-dataset)
-- [Step 2 — Read the schema](#step-2--read-the-schema)
-- [Step 3 — Build your data](#step-3--build-your-data)
-- [Step 4 — Import](#step-4--import)
-- [Step 5 — Validate](#step-5--validate)
-- [Step 6 — Release (web UI only)](#step-6--release-web-ui-only)
-
-**Reference**
-- [Concepts](#concepts)
-- [Export data](#export-data)
-- [Spatial data](#spatial-data)
-- [Job polling](#job-polling)
-- [Error handling](#error-handling)
-- [Logging](#logging)
-- [Provider helpers](#provider-helpers)
-
-**Other**
+- [Install](#install) · [Your API key](#your-api-key)
+- [The whole workflow](#the-whole-workflow) — a complete example
+- **Step by step:** [Connect](#step-1--connect) · [Find your dataset](#step-2--find-your-dataset) · [Read the schema](#step-3--read-the-schema) · [Prepare your data](#step-4--prepare-your-data) · [Upload](#step-5--upload) · [Check it landed](#step-6--check-it-landed) · [Validate](#step-7--validate) · [Release](#step-8--release)
+- [When something goes wrong](#when-something-goes-wrong) · [What your key can do](#what-your-key-can-do)
+- [Spatial data](#spatial-data) · [Seeing what's happening](#seeing-whats-happening)
 - [Custodian tasks (admin)](#custodian-tasks-admin)
-- [Development](#development)
-- [Interactive notebooks](#interactive-notebooks)
-- [Changelog](#changelog) · [Licence](#licence)
+- [Development](#development) · [Changelog](#changelog) · [Licence](#licence)
 
-## Installation
-
-Not yet on PyPI — install directly from GitHub:
+## Install
 
 ```bash
-pip install git+https://github.com/eea/reportnet-client.git
-
-# Recommended for reporters: DataFrame support (polars/pandas via narwhals)
-pip install "reportnet-client[dataframe] @ git+https://github.com/eea/reportnet-client.git"
-
-# Optional: system keychain storage for API keys
-pip install "reportnet-client[keyring] @ git+https://github.com/eea/reportnet-client.git"
-
-# Optional: spatial/GeoDataFrame support (geopandas)
-pip install "reportnet-client[spatial] @ git+https://github.com/eea/reportnet-client.git"
+pip install "reportnet-client[dataframe,keyring] @ git+https://github.com/eea/reportnet-client.git"
 ```
 
-## Setup: your API key
+That includes everything a reporter needs: table handling and secure key
+storage. Add `spatial` if your data has map geometry:
 
-Generate it in Reportnet under **Dataflow Settings → Generate new API key**.
-One key covers one dataflow.
+```bash
+pip install "reportnet-client[dataframe,keyring,spatial] @ git+https://github.com/eea/reportnet-client.git"
+```
 
-Store it in the OS keychain so it never appears in source code:
+## Your API key
+
+In Reportnet, open your dataflow and go to **Dataflow Settings → Generate new
+API key**. One key covers one dataflow.
+
+Save it once into your computer's keychain, so it never sits in your code:
 
 ```python
 import reportnet
 
-reportnet.save_key(dataflow_id=2003, api_key="your-api-key")
-
-# Load at runtime — no key in code
-client = reportnet.ReportnetClient.from_keyring(dataflow_id=2003)
-flow = client.for_dataflow(2003)
+reportnet.save_key(dataflow_id=1234, api_key="paste-your-key-here")
 ```
 
-Sandbox keys are stored separately (`sandbox=True` on both calls) and require
-VPN access.
-
-| Constant | URL |
-|---|---|
-| `reportnet.PRODUCTION_URL` | `https://api.reportnet.europa.eu` |
-| `reportnet.SANDBOX_URL` | `https://sandbox.reportnet.europa.eu` |
-
-## What your key can do
-
-Reportnet has no endpoint that reports your key's role, so the library probes
-for it — two cheap requests, cached:
+From then on your scripts just load it:
 
 ```python
-caps = flow.capabilities()
-print(caps.summary())
-# "dataflow 2003: reporter key; cannot discover dataset IDs"
-
-caps.role                    # "custodian" | "reporter" | "none"
-caps.can_discover_datasets   # False for Reporter keys
-caps.wants_provider_id       # True for Reporter keys
+client = reportnet.ReportnetClient.from_keyring(dataflow_id=1234)
 ```
 
-Measured on a BigData dataflow with a Reporter key:
+There is a separate sandbox environment for testing, which needs its own key
+and a VPN connection — pass `sandbox=True` to both calls to use it.
 
-| | Reporter | Custodian |
-|---|---|---|
-| Read dataset schemas | ✅ | ✅ |
-| Import data | ✅ | ✅ |
-| Validate and read results | ✅ | ✅ |
-| Check import status | ✅ | ✅ |
-| **List dataset IDs** | ❌ take from web UI | ✅ |
-| **Export / read rows back** | ❌ | ✅ |
-| Confirm an import landed (`verify_import`) | ✅ | ✅ |
-| Detect the backend (`is_big_dataflow`) | ✅ | ✅ |
-| Resolve codelists | ❌ (needs export) | ✅ |
-| Release history | ❌ | ✅ |
+## The whole workflow
 
-Nothing here is a bug in the library or your key — it's how Reportnet assigns
-permissions. The library raises `DiscoveryNotPermittedError` with an actionable
-message rather than a bare `403` when you hit one of these.
-
-## Step 1 — Find your dataset
-
-**With a Reporter key, take the dataset ID from the web UI.** Open your
-dataset in Reportnet; the ID is in the URL:
-
-```
-https://reportnet.europa.eu/dataflow/2003/dataset/108953
-                                                  ^^^^^^ your dataset_id
-```
+A complete, working script. Each piece is explained below.
 
 ```python
-it = flow.for_provider(64)      # your provider_id — 64 is Italy
-DATASET_ID = 108953
+import polars as pl
+import reportnet
+
+DATAFLOW_ID = 1234          # from the Reportnet URL
+DATASET_ID  = 56789         # from the Reportnet URL — see Step 2
+COUNTRY     = "IT"          # your country code
+
+client = reportnet.ReportnetClient.from_keyring(dataflow_id=DATAFLOW_ID)
+me = client.for_dataflow(DATAFLOW_ID).find_reporter(COUNTRY)
+
+# What does this dataset expect?
+schema = me.get_schema(dataset_id=DATASET_ID)
+table = schema.table("Contacts")
+
+# Prepare and check your data before sending it
+data = pl.read_excel("my_data.xlsx", sheet_name="Contacts")
+data = table.cast_frame(data)
+
+# Upload, then confirm it arrived
+me.import_file(dataset_id=DATASET_ID, file=data, table_schema_id=table.id).wait()
+print(me.verify_import(dataset_id=DATASET_ID)["Contacts"])
+
+# Run Reportnet's checks
+result = me.validate(dataset_id=DATASET_ID)
+print(result.summary())
 ```
 
-Look up your `provider_id` by country code:
+## Step 1 — Connect
+
+Identify yourself by country code. You don't need to know any internal ID
+numbers:
 
 ```python
-reportnet.by_country("IT")      # [DataProvider(provider_id=64, country_code='IT', ...)]
+client = reportnet.ReportnetClient.from_keyring(dataflow_id=DATAFLOW_ID)
+flow = client.for_dataflow(DATAFLOW_ID)
+
+me = flow.find_reporter("IT")        # your ISO country code
 ```
 
-If your key *can* discover datasets (custodian), look them up by name instead:
+If the code isn't registered for this dataflow, the error lists the ones that
+are. To see them yourself:
 
 ```python
-ds = it.dataset("Descriptive data")     # raises DiscoveryNotPermittedError for reporter keys
-it.datasets_by_table()                  # {"Descriptive data": ..., "Spatial data": ...}
+for r in flow.get_reporters():
+    print(r.country_code, r.country_name)
 ```
 
-## Step 2 — Read the schema
+## Step 2 — Find your dataset
 
-This works with any key, given a dataset ID:
+**Take the dataset ID from the Reportnet website.** Open your dataset; the
+number is in the address bar:
+
+```
+https://reportnet.europa.eu/dataflow/1234/dataset/56789
+                                                  ^^^^^ this is your dataset ID
+```
+
+A dataflow usually gives you one dataset per group of tables, so you may have
+two or three. Note the numbers once and keep them in your script.
+
+> Reportnet doesn't let a reporter's key list dataset IDs — only administrators
+> can do that. This is a permission rule, not a limitation of the library, so
+> the website is the place to look them up.
+
+## Step 3 — Read the schema
+
+The schema tells you which tables and columns are expected, and which are
+mandatory:
 
 ```python
-schema = it.get_schema(dataset_id=DATASET_ID)
+schema = me.get_schema(dataset_id=DATASET_ID)
 
 for table in schema.tables:
-    print(table.name, "required:", table.required_columns())
-
-table = schema.table("Reporter")
-for field in table.fields:
-    print(field.name, field.type.value, "required" if field.required else "")
+    print(table.name, "— required:", table.required_columns())
 ```
 
-### Typed DataFrame templates
+### Start from a ready-made template
 
-`get_template()` returns one empty, correctly-typed DataFrame per table:
+`get_template()` gives you an empty table per sheet, already set up with the
+right column names and types:
 
 ```python
-templates = it.get_template(dataset_id=DATASET_ID)
-print(templates["Reporter"].dtypes)
+templates = me.get_template(dataset_id=DATASET_ID)
+templates["Contacts"]        # empty, correctly typed
 ```
 
-Numeric, date and boolean columns are always typed. `LINK`/`CODELIST` columns
-become `pl.Enum` (polars) or `CategoricalDtype` (pandas) **only if the codelists
-can be resolved**, which requires export rights — so with a Reporter key
-they stay plain strings and you get a warning saying so. Pass `strict=True` to
-make that an error instead:
+Some columns only accept values from an official code list. The library fills
+those in when it can; when it can't, it tells you rather than quietly letting
+anything through. Add `strict=True` if you'd rather that stopped your script:
 
 ```python
-templates = it.get_template(dataset_id=DATASET_ID, strict=True)
+templates = me.get_template(dataset_id=DATASET_ID, strict=True)
 ```
 
-The library never hands back a template that silently accepts anything.
+## Step 4 — Prepare your data
 
-## Step 3 — Build your data
+Read your spreadsheet or CSV:
 
 ```python
 import polars as pl
 
-raw = pl.read_excel("my_data.xlsx", sheet_name="Reporter")
-# or pl.read_csv("my_data.csv", separator="|")
+data = pl.read_excel("my_data.xlsx", sheet_name="Contacts")
 ```
 
-Coerce it to the schema's types — this raises on values that don't fit:
+Then fit it to the schema. `cast_frame()` converts columns to the expected
+types and fails if something can't be converted — better to find out now than
+after uploading:
 
 ```python
-typed = schema.table("Reporter").cast_frame(raw)
+data = schema.table("Contacts").cast_frame(data)
 ```
 
-Or collect errors instead of raising:
+If you'd rather see a list of problems than have it stop:
 
 ```python
-errors = schema.table("Reporter").validate_frame(typed)
-if errors:
-    raise SystemExit("\n".join(errors))
+for problem in schema.table("Contacts").validate_frame(data):
+    print(problem)
 ```
 
-Do **not** include a `record_id` column — Reportnet assigns it.
+Don't add a `record_id` column — Reportnet creates that itself.
 
-## Step 4 — Import
+## Step 5 — Upload
 
 ```python
-handle = it.import_file(
-    dataset_id=DATASET_ID,
-    file=typed,                    # path, bytes, DataFrame, DuckDB relation or GeoDataFrame
-    table_schema_id=schema.table("Reporter").id,
-    replace=False,                 # True replaces all existing rows
-)
-handle.wait(poll_interval=5.0, timeout=600.0)
+table = schema.table("Contacts")
+
+job = me.import_file(dataset_id=DATASET_ID, file=data, table_schema_id=table.id)
+job.wait()
 ```
 
-The default delimiter is `|`; pass `delimiter=","` if your data uses commas.
+Uploads run in the background, so `wait()` blocks until Reportnet finishes.
+Add `replace=True` to clear the table first instead of adding to it.
 
-`providerId` is handled for you. Whether Reportnet requires or rejects it
-depends on your key's role, so the library infers it and retries with the other
-option if the inference was wrong.
-
-Multiple tables at once:
+You can also pass a file path directly (`file="my_data.csv"`), and upload
+several tables in one go:
 
 ```python
-it.import_frames(dataset_id=DATASET_ID, frames={"Reporter": df1, "Contacts": df2})
+me.import_frames(dataset_id=DATASET_ID, frames={"Contacts": df1, "Sites": df2})
 ```
 
-### Confirm it actually landed
+## Step 6 — Check it landed
 
-**A FINISHED job does not prove the data was written.** Reportnet can accept a
-request, run it, report FINISHED and write nothing — for example when records
-are missing a required `countryCode`. Always check:
+**An upload can finish successfully and still store nothing** — for example if
+rows are missing a value Reportnet requires. Always confirm:
 
 ```python
-it.verify_import(dataset_id=DATASET_ID)["Reporter"]
-# {'records': 1, 'last_import': datetime(2026, 9, 7, 8, 18, 20, tzinfo=utc),
-#  'file_extension': 'csv'}
+me.verify_import(dataset_id=DATASET_ID)["Contacts"]
+# {'records': 42, 'last_import': datetime(...), 'file_extension': 'csv'}
 ```
 
-`records` is `None` for tables never imported into. This works with a Reporter
-key — it reads import statistics rather than exporting, so it's available even
-though exports are not.
+`records` tells you how many rows actually arrived. If it's `0` or `None` when
+you expected data, something was rejected silently — check the file for missing
+mandatory columns.
 
-## Step 5 — Validate
+## Step 7 — Validate
+
+This runs Reportnet's own quality checks, the same ones the website runs:
 
 ```python
-result = it.validate(dataset_id=DATASET_ID, poll_interval=10.0, timeout=600.0)
+result = me.validate(dataset_id=DATASET_ID)
 
-print(result.summary())        # "dataset 108953: 3 issue(s) — 1 BLOCKER, 2 ERROR"
+print(result.summary())
+# "dataset 56789: 3 issue(s) — 1 BLOCKER, 2 ERROR"
+
 if result.has_blockers:
-    print(result.to_frame())   # DataFrame of all issues
-
-result.ok          # True when no BLOCKER or ERROR
-result.raw         # full API response
+    print(result.to_frame())      # every issue, as a table
 ```
 
-The right backend endpoint is chosen for you. If another job is running you'll
-get `DatasetLockedError` — wait and retry.
+Validation can take a few minutes on large datasets. `result.ok` is `True` when
+there's nothing blocking your submission.
 
-## Step 6 — Release (web UI only)
+If you get a "dataset locked" message, another job is still running — wait a
+moment and try again.
 
-**There is no API endpoint that releases or submits a dataset.** Verified across
-all 13 Swagger service specs and all three help-documentation categories. You
-can automate everything up to and including validation, but a human must press
-**Release** in the Reportnet web interface.
+## Step 8 — Release
 
-See [API notes](https://eea.github.io/reportnet-client/api-notes/) for the
-evidence and other API limitations.
+**This step is not available from Python.** Reportnet has no way to submit a
+dataset programmatically, so once your data is uploaded and validation is
+clean, open the dataflow in the website and press **Release**.
 
-## Concepts
+Everything up to that point can be automated and repeated.
 
-```
-Dataflow  (a reporting obligation, e.g. "UWWTD")
-  └── Reporter / DataProvider  (a country or organisation — you)
-        └── Dataset  (your data, one per table schema)
-              └── Table / Field
-  └── Reference Dataset  (shared codelists, no reporter)
-```
-
-Two storage backends exist — **Citus** and **BigData (DLT2)**. The library picks
-the right endpoints and API versions for you; `flow.is_big_dataflow()` reports
-which, when your key can read it.
-
-## Export data
-
-Requires export rights — **not available to Reporter keys** on the
-dataflows measured so far.
+## When something goes wrong
 
 ```python
-frames = flow.etl_export(dataset_id=DATASET_ID).to_frames()
-# {"Reporter": <polars.DataFrame>, ...}
+from reportnet import (AuthError, DiscoveryNotPermittedError,
+                       DatasetLockedError, JobFailedError)
+
+try:
+    me.import_file(dataset_id=DATASET_ID, file=data).wait()
+except DatasetLockedError:
+    print("Another job is running on this dataset — try again shortly.")
+except DiscoveryNotPermittedError as e:
+    print(e)      # explains how to find the ID on the website
+except AuthError:
+    print("Your key is invalid, or not allowed to do this.")
+except JobFailedError as e:
+    print(f"Reportnet rejected the job: {e.status}")
 ```
 
-The API version is auto-selected (v4 for BigData, v3 for Citus). Pass
-`version=5` for a ZIP of Parquet, which is smaller and faster to load.
+Common situations:
+
+| What you see | What it usually means |
+|---|---|
+| "not authorised" when listing datasets | Normal for a reporter key — get the ID from the website |
+| Dataset locked | A validation or import is still running |
+| Upload finished but `records` is 0 | Rows were rejected — check mandatory columns |
+| Code-list columns accept anything | Your key can't read the code lists; values are checked at validation instead |
+
+Temporary network problems are retried automatically.
+
+## What your key can do
+
+Reportnet gives reporters and administrators different permissions. The library
+works out which you have:
+
+```python
+print(flow.capabilities().summary())
+# "dataflow 1234: reporter key; cannot discover dataset IDs"
+```
+
+| | Reporter | Administrator |
+|---|---|---|
+| Read the schema | ✅ | ✅ |
+| Upload data | ✅ | ✅ |
+| Confirm an upload landed | ✅ | ✅ |
+| Validate and read results | ✅ | ✅ |
+| Look up your country by code | ✅ | ✅ |
+| List dataset IDs | website only | ✅ |
+| Download data back out | ❌ | ✅ |
+| Fill in code lists automatically | ❌ | ✅ |
+
+None of the ❌ rows are faults — they're how Reportnet assigns permissions.
 
 ## Spatial data
 
-Geometry fields round-trip as WKT (v4 exports) or GeoJSON (v3);
-`to_geodataframe()` detects which.
-
-```bash
-pip install "reportnet-client[spatial]"
-```
+If your dataset has map geometry, it converts to a GeoDataFrame in one step
+(needs the `spatial` extra):
 
 ```python
-frames = flow.etl_export(dataset_id=89259).to_frames()
-gdf = reportnet.to_geodataframe(frames["ProtectedArea"], "geometry_polygon")
+data = flow.etl_export(dataset_id=DATASET_ID).to_frames()
+gdf = reportnet.to_geodataframe(data["ProtectedArea"], "geometry_polygon")
 gdf.plot()
 ```
 
-A `GeoDataFrame` can be imported directly — geometry is serialised as WKT.
+You can upload a GeoDataFrame straight back with `import_file()`.
 
-## Job polling
+Note that downloading requires administrator permissions.
 
-Imports, exports and validations are asynchronous and return a `JobHandle`:
+## Seeing what's happening
 
-```python
-handle.status()                                    # single poll
-handle.wait(poll_interval=5.0, timeout=300.0,
-            on_status=lambda s: print(s))          # block until terminal
-```
-
-Terminal statuses: `FINISHED`, `FAILED`, `REFUSED`, `CANCELED`,
-`CANCELED_BY_ADMIN`. `.wait()` raises `JobFailedError` on anything but
-`FINISHED`.
-
-## Error handling
-
-```python
-from reportnet import (AuthError, DiscoveryNotPermittedError, APIError,
-                       DatasetLockedError, JobFailedError, RateLimitError)
-
-try:
-    it.import_file(dataset_id=DATASET_ID, file="data.csv").wait()
-except DiscoveryNotPermittedError as e:
-    print(e)                       # explains how to get the ID from the web UI
-except DatasetLockedError:
-    print("another job is running — try again shortly")
-except AuthError:
-    print("key invalid, or not permitted for this operation")
-except JobFailedError as e:
-    print(f"job {e.job_id} ended with {e.status}")
-```
-
-`DiscoveryNotPermittedError` subclasses `AuthError`, so existing handlers keep
-working. `CodelistResolutionError` is raised only when you pass `strict=True`.
-
-Transient network errors and 5xx responses on GET are retried automatically
-(3 times, exponential back-off). POST and PUT are not, to avoid duplicate jobs.
-
-## Logging
-
-Silent until you opt in:
+Long uploads and validations can look like nothing is happening. Turn on
+progress messages:
 
 ```python
 import logging
 logging.basicConfig(level=logging.INFO)
-logging.getLogger("reportnet").setLevel(logging.DEBUG)
+logging.getLogger("reportnet").setLevel(logging.INFO)
 ```
 
-| Level | What you get |
-|---|---|
-| `DEBUG` | every HTTP request/response, every job poll |
-| `INFO` | job transitions with elapsed time, capability detection, codelist coverage |
-| `WARNING` | retries, failed jobs, and any fallback that weakens a result |
+You'll see each job start, change state and finish, plus warnings whenever the
+library has to fall back to something less precise. Your API key is never
+written to the log.
 
-API keys are never written to a log record.
-
-## Provider helpers
+For a progress callback instead:
 
 ```python
-from reportnet import by_id, by_country, by_group
-
-by_country("IT")       # [DataProvider(provider_id=64, ...)]
-by_id(64)              # DataProvider(provider_id=64, country_code='IT', ...)
-by_group("EEA")        # all EEA member providers
+job.wait(on_status=lambda status: print(status))
 ```
-
-Most countries appear twice with different IDs — check which your dataflow uses.
 
 ## Custodian tasks (admin)
 
-Custodians administer a dataflow rather than report to it, and have dedicated
-tooling elsewhere. What this library adds, given a custodian key:
+With an administrator key you also get the dataflow-wide view:
 
 ```python
-flow = client.for_dataflow(2003)          # no provider scope
+flow = client.for_dataflow(DATAFLOW_ID)
 
-flow.get_reporters()                      # every country registered
-flow.get_reporting_datasets()             # every reporter's datasets
-flow.get_dataflow_contents()              # all of the above in ONE request
-flow.to_mermaid()                         # diagram, coloured by submission status
+flow.get_reporting_datasets()      # every country's datasets
+flow.get_dataflow_contents()       # everything about the dataflow, in one call
+flow.dataset("Contacts")           # look datasets up by name
+flow.to_mermaid()                  # diagram coloured by submission status
 ```
 
-Reference datasets (shared codelists):
+Downloading data, managing shared code lists, and reading release history are
+also administrator-only:
 
 ```python
+frames = flow.etl_export(dataset_id=DATASET_ID).to_frames()
+
 ref = flow.reference_dataset("codelist")
 flow.import_file(dataset_id=ref.id, file="codelists.csv", replace=True)
 flow.set_reference_dataset_updatable(dataset_id=ref.id, updatable=False)
-```
 
-Dataset management:
-
-```python
-flow.delete_dataset_data(dataset_id=DATASET_ID)
-flow.delete_table_data(dataset_id=DATASET_ID, table_schema_id="...")
 flow.list_historic_releases(dataset_id=DATASET_ID)
 ```
 
 ## Development
 
 ```bash
-uv sync                       # create .venv and install dev dependencies
-uv run pytest                 # unit tests (integration skipped)
-uv run pytest --integration   # also live API tests (needs keyring credentials)
+uv sync                       # set up the environment
+uv run pytest                 # tests
+uv run pytest --integration   # also test against the live API
 uv run ruff check src tests
 uv run mypy src
-uv run mkdocs serve
+uv run mkdocs serve           # preview the documentation
 ```
 
-## Interactive notebooks
-
-Three [marimo](https://marimo.io) notebooks under `notebooks/`:
-
-| Notebook | Purpose |
-|---|---|
-| `01_explore_dataflow.py` | Browse reporters, schemas, dataflow structure |
-| `02_import_export_pipeline.py` | End-to-end import → validate → export |
-| `03_spatial_geodataframe.py` | Spatial data → GeoDataFrame |
-
-```bash
-uv sync --group explore
-uv run marimo edit notebooks/01_explore_dataflow.py
-```
+Notes on the API's quirks and limitations are in
+[docs/api-notes.md](docs/api-notes.md). Example notebooks are in `notebooks/`.
 
 ## Changelog
 
-Release history is in [CHANGELOG.md](CHANGELOG.md). While the version is below
-1.0, breaking changes may land in a minor release — they're always listed under
-**Changed** with a migration note.
+See [CHANGELOG.md](CHANGELOG.md). Until version 1.0, breaking changes can land
+in a minor release and are always listed with a note on what to change.
 
 ## Licence
 
