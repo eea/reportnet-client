@@ -47,24 +47,33 @@ ie.import_file(dataset_id=ds.id, file="ireland.csv").wait()
 frames = ie.etl_export(dataset_id=ds.id).to_frames()
 ```
 
+## Who this is for
+
+This library is built for **Lead Reporters** — the people who prepare and
+submit a country's or organisation's data. **Custodians** (dataflow admins) can
+use it too and unlock extra capabilities, but they have dedicated tooling
+elsewhere, so their needs are secondary here.
+
 ## The reporting workflow
 
 The guides follow the order you'd actually work in:
 
-1. **[Dataset schema](guides/schema.md)** — discover the tables, fields and
-   codelists you must match, and get typed, empty DataFrame templates.
-2. **[Import data](guides/import.md)** — upload a file, DataFrame, DuckDB
+1. **[What your key can do](guides/capabilities.md)** — your key's role decides
+   what works. Start here; it explains why a Lead Reporter takes dataset IDs
+   from the web UI.
+2. **[Dataset schema](guides/schema.md)** — the tables, fields and codelists
+   you must match, plus typed DataFrame templates.
+3. **[Import data](guides/import.md)** — upload a file, DataFrame, DuckDB
    relation or GeoDataFrame.
-3. **[Validate a dataset](guides/validation.md)** — run Reportnet's rules and
+4. **[Validate a dataset](guides/validation.md)** — run Reportnet's rules and
    read the results as a DataFrame.
-4. **[Export data](guides/export.md)** — pull data back out, as bytes or
-   DataFrames.
 5. **Release** — **not available through the API.** See
-   [API notes](api-notes.md#there-is-no-release-endpoint); you must press
+   [API notes](api-notes.md#there-is-no-release-endpoint); a human must press
    *Release* in the Reportnet web UI.
 
-Supporting material: [Reference datasets](guides/reference-datasets.md),
-[Provider helpers](guides/providers.md), [Logging](guides/logging.md).
+Custodian-only material lives under **Custodian (admin)**:
+[Export data](guides/export.md) and
+[Reference datasets](guides/reference-datasets.md).
 
 ## Secure key storage
 

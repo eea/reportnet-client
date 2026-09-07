@@ -222,6 +222,10 @@ def test_import_file_works_when_the_dataflow_read_is_forbidden(mock_router, clie
     (job 248505 succeeded once it was).
     """
     mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    # capabilities() falls back to this probe to tell "reporter key" from "bad key"
+    mock_router.get("/representative/v1/dataflow/2").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     route = mock_router.post("/dataset/v2/importFileData/1").mock(
         return_value=httpx.Response(200, json=JOB_RESPONSE)
     )
@@ -237,6 +241,10 @@ def test_import_file_retries_with_the_opposite_provider_id_on_403(mock_router, c
     """Whether BigData wants providerId depends on the key's role, which cannot
     be queried. A wrong guess must self-correct rather than fail."""
     mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    # capabilities() falls back to this probe to tell "reporter key" from "bad key"
+    mock_router.get("/representative/v1/dataflow/2").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     route = mock_router.post("/dataset/v2/importFileData/1")
     route.side_effect = [
         httpx.Response(403, text="Forbidden"),          # with providerId
@@ -296,6 +304,10 @@ def test_import_file_forbidden_preflight_still_surfaces_a_real_import_403(
     from reportnet import AuthError
 
     mock_router.get("/dataflow/v1/2").mock(return_value=httpx.Response(403, text="Forbidden"))
+    # capabilities() falls back to this probe to tell "reporter key" from "bad key"
+    mock_router.get("/representative/v1/dataflow/2").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     route = mock_router.post("/dataset/v2/importFileData/1").mock(
         return_value=httpx.Response(403, text="Forbidden")
     )

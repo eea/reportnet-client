@@ -9,6 +9,7 @@ from .exceptions import (
     AuthError,
     CodelistResolutionError,
     DatasetLockedError,
+    DiscoveryNotPermittedError,
     JobFailedError,
     JobTimeoutError,
     RateLimitError,
@@ -18,6 +19,7 @@ from .interactive import connect_interactive
 from .jobs import JobHandle, JobStatus
 from .keychain import delete_key, get_key, save_key
 from .models import (
+    Capabilities,
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
@@ -50,6 +52,7 @@ __all__ = [
     "JobHandle",
     "JobStatus",
     "DataflowContents",
+    "Capabilities",
     "DataflowInfo",
     "Reporter",
     "ReportingDataset",
@@ -67,6 +70,7 @@ __all__ = [
     "AuthError",
     "DatasetLockedError",
     "CodelistResolutionError",
+    "DiscoveryNotPermittedError",
     "RateLimitError",
     "JobFailedError",
     "JobTimeoutError",

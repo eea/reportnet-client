@@ -14,9 +14,15 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, Literal, Union
 
 from ._log import get_logger
-from .exceptions import AuthError, CodelistResolutionError, ReportnetError
+from .exceptions import (
+    AuthError,
+    CodelistResolutionError,
+    DiscoveryNotPermittedError,
+    ReportnetError,
+)
 from .jobs import JobHandle, JobStatus
 from .models import (
+    Capabilities,
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
@@ -110,16 +116,13 @@ class DataflowClient:
             return override
         if self._provider_id is None:
             return None
-        try:
-            is_big = self.is_big_dataflow()
-        except AuthError:
-            logger.warning(
-                "cannot read dataflow %s to detect its backend (not authorised); "
-                "sending providerId=%s, which reporter-scoped keys require on BigData",
+        if self.capabilities().wants_provider_id:
+            logger.debug(
+                "reporter-scoped key on dataflow %s; sending providerId=%s",
                 self._dataflow_id, self._provider_id,
             )
             return self._provider_id
-        return None if is_big else self._provider_id
+        return None if self.is_big_dataflow() else self._provider_id
 
     def for_provider(self, provider_id: int) -> "DataflowClient":
         """Return a new DataflowClient scoped to a specific reporter / country.
@@ -199,11 +202,32 @@ class DataflowClient:
             print(contents.info.name)
             print(len(contents.reporting_datasets), "reporting datasets")
         """
-        return self._client.get_dataflow_contents(dataflow_id=self._dataflow_id)
+        try:
+            return self._client.get_dataflow_contents(dataflow_id=self._dataflow_id)
+        except DiscoveryNotPermittedError:
+            raise
+        except AuthError as exc:
+            raise DiscoveryNotPermittedError(exc.status_code, self._discovery_hint()) from exc
+
+    def capabilities(self) -> Capabilities:
+        """Return what this API key may do on this dataflow. See
+        :meth:`ReportnetClient.capabilities <reportnet.ReportnetClient.capabilities>`."""
+        return self._client.capabilities(dataflow_id=self._dataflow_id)
+
+    def _discovery_hint(self) -> str:
+        """Explain a discovery 403 in terms the caller can act on."""
+        return (
+            f"This API key may not read dataflow {self._dataflow_id} "
+            f"(GET /dataflow/v1/{self._dataflow_id} returned 403), which is the only "
+            f"endpoint that lists dataset IDs. This is normal for a Lead Reporter key. "
+            f"Take the dataset ID from the Reportnet web UI — it is in the URL when you "
+            f"open the dataset — and pass dataset_id= directly. Methods that need only a "
+            f"dataset ID (get_schema, import_file, validate) work normally."
+        )
 
     def get_dataflow(self) -> DataflowInfo:
         """Return name, type and status of this dataflow."""
-        return self._client.get_dataflow(dataflow_id=self._dataflow_id)
+        return self.get_dataflow_contents().info
 
     def get_reporters(self) -> list[Reporter]:
         """Return the list of countries/organisations registered for this dataflow."""
@@ -227,7 +251,7 @@ class DataflowClient:
             # Unscoped — returns every reporter's datasets
             all_ds = flow.get_reporting_datasets()
         """
-        all_ds = self._client.get_reporting_datasets(dataflow_id=self._dataflow_id)
+        all_ds = list(self.get_dataflow_contents().reporting_datasets)
         if self._provider_id is not None:
             return [ds for ds in all_ds if ds.provider_id == self._provider_id]
         return all_ds
@@ -333,7 +357,7 @@ class DataflowClient:
             # [ReferenceDataset(id=93975, name='Reference Dataset - Codelist', ...)]
             codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=ref_ds[0].id)
         """
-        return self._client.get_reference_datasets(dataflow_id=self._dataflow_id)
+        return list(self.get_dataflow_contents().reference_datasets)
 
     def get_test_datasets(self) -> list[TestDataset]:
         """Return all test datasets for this dataflow.
@@ -347,7 +371,7 @@ class DataflowClient:
             # [TestDataset(id=93953, name='Test Dataset - Table1a', ...)]
             flow.import_file(dataset_id=test_ds[0].id, file="sample.csv")
         """
-        return self._client.get_test_datasets(dataflow_id=self._dataflow_id)
+        return list(self.get_dataflow_contents().test_datasets)
 
     def is_big_dataflow(self) -> bool:
         """Return True if this is a BigData (DLT2) dataflow.

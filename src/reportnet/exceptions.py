@@ -26,6 +26,20 @@ class DatasetLockedError(APIError):
     pass
 
 
+class DiscoveryNotPermittedError(AuthError):
+    """Raised when a key may not read the dataflow needed to look something up.
+
+    A Lead Reporter key can import into and validate its own datasets, but is
+    forbidden from ``GET /dataflow/v1/{id}`` — the only endpoint that lists
+    dataset IDs. Everything that resolves a *name* to an *id* therefore fails
+    for the role that most needs it.
+
+    Subclasses :class:`AuthError`, so existing ``except AuthError`` handlers
+    still catch it. It exists to carry an actionable message instead of a bare
+    ``HTTP 403``.
+    """
+
+
 class CodelistResolutionError(ReportnetError):
     """Raised when LINK/CODELIST fields could not be resolved to valid values.
 

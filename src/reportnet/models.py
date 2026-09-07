@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DataflowInfo",
     "DataflowContents",
+    "Capabilities",
     "Reporter",
     "ReportingDataset",
     "ReferenceDataset",
@@ -215,6 +216,74 @@ class DataflowContents:
             ),
             test_datasets=tuple(TestDataset.from_dict(x) for x in d.get("testDatasets") or []),
         )
+
+
+@dataclass(frozen=True)
+class Capabilities:
+    """What the current API key is allowed to do on one dataflow.
+
+    Reportnet grants permissions per *key role*, and the API has no endpoint
+    that reports the role — so this is probed. The distinction matters because
+    it changes how requests must be built, not just what succeeds:
+    a Lead Reporter key **must** send ``providerId`` when importing, while a
+    custodian key is refused if it does.
+
+    Obtained from :meth:`~reportnet.DataflowClient.capabilities`; cached, since
+    a key's role does not change.
+
+    Example::
+
+        caps = flow.capabilities()
+        if not caps.can_discover_datasets:
+            print("dataset IDs must come from the Reportnet web UI")
+    """
+
+    dataflow_id: int
+    can_read_dataflow: bool
+    can_read_representatives: bool
+
+    @property
+    def role(self) -> str:
+        """``"custodian"``, ``"reporter"``, or ``"none"``.
+
+        Inferred, not reported: only custodian-level keys may read
+        ``GET /dataflow/v1/{id}``. A key that can read neither probe is not
+        usable on this dataflow at all.
+        """
+        if self.can_read_dataflow:
+            return "custodian"
+        if self.can_read_representatives:
+            return "reporter"
+        return "none"
+
+    @property
+    def is_usable(self) -> bool:
+        """True if the key authenticates and can reach at least one endpoint."""
+        return self.role != "none"
+
+    @property
+    def can_discover_datasets(self) -> bool:
+        """True if dataset IDs can be looked up by name.
+
+        Discovery reads ``GET /dataflow/v1/{id}``; reporter keys cannot, and
+        must take dataset IDs from the web UI.
+        """
+        return self.can_read_dataflow
+
+    @property
+    def wants_provider_id(self) -> bool:
+        """True if BigData writes must carry ``providerId``.
+
+        Verified live on dataflow 2003: a Lead Reporter key is refused without
+        it, a custodian key is refused with it.
+        """
+        return self.role == "reporter"
+
+    def summary(self) -> str:
+        if not self.is_usable:
+            return f"dataflow {self.dataflow_id}: key not usable"
+        extra = "" if self.can_discover_datasets else "; cannot discover dataset IDs"
+        return f"dataflow {self.dataflow_id}: {self.role} key{extra}"
 
 
 # ── Schema models ─────────────────────────────────────────────────────────────

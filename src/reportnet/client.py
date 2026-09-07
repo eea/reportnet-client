@@ -23,6 +23,7 @@ from ._log import get_logger
 from ._util import to_file_tuple
 from .jobs import JobHandle
 from .models import (
+    Capabilities,
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
@@ -61,6 +62,8 @@ class ReportnetClient:
         # for the lifetime of the client. Shared with DataflowClient, which
         # delegates rather than keeping a second copy.
         self._big_data_cache: dict[int, bool] = {}
+        # A key's role never changes, so this is safe for the client's lifetime.
+        self._capabilities_cache: dict[int, Capabilities] = {}
 
     @classmethod
     def from_keyring(
@@ -154,6 +157,47 @@ class ReportnetClient:
             return True
         except AuthError:
             return False
+
+    def capabilities(self, *, dataflow_id: int) -> Capabilities:
+        """Probe what this API key is allowed to do on *dataflow_id*.
+
+        Reportnet has no endpoint reporting a key's role, and the role changes
+        how requests must be *built* — a Lead Reporter key must send
+        ``providerId`` on BigData writes, a custodian key is refused if it
+        does. So the library probes: at most two cheap GETs, cached per client.
+
+        Example::
+
+            caps = client.capabilities(dataflow_id=2003)
+            print(caps.summary())      # "dataflow 2003: reporter key; cannot discover dataset IDs"
+        """
+        cached = self._capabilities_cache.get(dataflow_id)
+        if cached is not None:
+            return cached
+
+        from .exceptions import AuthError
+
+        can_read_dataflow = False
+        can_read_representatives = False
+        try:
+            self.get_dataflow_contents(dataflow_id=dataflow_id)
+            can_read_dataflow = True
+            can_read_representatives = True  # custodian keys can read both
+        except AuthError:
+            try:
+                self._http.get(f"/representative/v1/dataflow/{dataflow_id}")
+                can_read_representatives = True
+            except AuthError:
+                pass
+
+        caps = Capabilities(
+            dataflow_id=dataflow_id,
+            can_read_dataflow=can_read_dataflow,
+            can_read_representatives=can_read_representatives,
+        )
+        logger.info("capabilities: %s", caps.summary())
+        self._capabilities_cache[dataflow_id] = caps
+        return caps
 
     # ── Dataflow metadata ─────────────────────────────────────────────────────
 

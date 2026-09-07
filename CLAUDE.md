@@ -10,6 +10,20 @@ VPN-only, separate keys). Auth is a static `Authorization: ApiKey {key}` header 
 
 Licensed EUPL-1.2. The package is typed and ships `py.typed`.
 
+### Who the library is for
+
+**Lead Reporters are the primary users** — they prepare and submit one
+country's or organisation's data. Custodians (dataflow admins) are secondary:
+supported, but they have dedicated tooling elsewhere. When designing an API or
+writing docs, the reporter path comes first and the custodian path is marked as
+admin.
+
+This matters technically, not just editorially: a Lead Reporter key **cannot**
+list dataset IDs or export anything, so any feature routed through
+`GET /dataflow/v1/{id}` is custodian-only by construction. Check
+`flow.capabilities()` before assuming a call is available, and prefer designs
+that need only a `dataset_id`.
+
 ## Commands
 
 ```bash
@@ -131,7 +145,16 @@ degradation fallback. Never log headers — the API key lives there.
 **Name-based lookup** — `dataset(table_name)`, `datasets_by_table()` and
 `reference_dataset(name)` exist because real scripts were indexing by list
 position (`ds[0]`, `refs[3]`). `dataset()` requires a provider-scoped client,
-since table names repeat across reporters.
+since table names repeat across reporters. All of it reads
+`GET /dataflow/v1/{id}`, so it is **custodian-only** — reporter keys get
+`DiscoveryNotPermittedError`, which subclasses `AuthError` and carries a
+message telling the user to take the ID from the web UI.
+
+**Capabilities** — `flow.capabilities()` probes the key's role (at most two
+GETs, cached on `ReportnetClient`). `Capabilities.wants_provider_id` drives
+`_pid_bigdata_safe`; `can_discover_datasets` gates name lookup. There is no API
+endpoint reporting a role, so this is inferred from whether
+`GET /dataflow/v1/{id}` is readable. Don't replace it with a backend check.
 
 **Schema layer** — `get_schema()` returns a `DatasetSchema` of `TableSchema` /
 `FieldSchema` / `FieldType`. `TableSchema` carries the DataFrame helpers:
