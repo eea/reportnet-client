@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DataflowInfo",
     "DataflowContents",
+    "Capabilities",
     "DataCollection",
     "EuDataset",
     "Reporter",
@@ -197,8 +198,15 @@ class DataCollection:
 
     Note that the API does not populate ``nameDatasetSchema`` for these, so
     there is no separate table name — the table is part of ``name``
-    (e.g. ``"Data Collection - Table1a"``). Look one up with
-    :meth:`~reportnet.DataflowClient.data_collection`.
+    (e.g. ``"Data Collection - Table1a"``). Match on ``schema_id`` rather than
+    parsing that string when you need to pair one with a reporting dataset::
+
+        contents = flow.get_dataflow_contents()
+        by_schema = {dc.schema_id: dc for dc in contents.data_collections}
+        collection = by_schema.get(reporting_dataset.schema_id)
+
+    There is no name-based lookup helper for these yet, unlike
+    :meth:`~reportnet.DataflowClient.reference_dataset`.
     """
 
     id: int
@@ -281,6 +289,85 @@ class DataflowContents:
             ),
             eu_datasets=tuple(EuDataset.from_dict(x) for x in d.get("euDatasets") or []),
         )
+
+
+@dataclass(frozen=True)
+class Capabilities:
+    """What the current API key is allowed to do on one dataflow.
+
+    Reportnet grants permissions per *key role*, and the API has no endpoint
+    that reports the role — so this is probed. The distinction matters because
+    it changes how requests must be built, not just what succeeds:
+    a Reporter key **must** send ``providerId`` when importing, while a
+    custodian key is refused if it does.
+
+    Obtained from :meth:`~reportnet.DataflowClient.capabilities`; cached, since
+    a key's role does not change.
+
+    Example::
+
+        caps = flow.capabilities()
+        if not caps.can_discover_datasets:
+            print("dataset IDs must come from the Reportnet web UI")
+    """
+
+    dataflow_id: int
+    can_read_dataflow: bool
+    can_read_representatives: bool
+
+    @property
+    def role(self) -> str:
+        """``"custodian"``, ``"reporter"``, or ``"none"``.
+
+        Inferred, not reported: only custodian-level keys may read
+        ``GET /dataflow/v1/{id}``. A key that can read neither probe is not
+        usable on this dataflow at all.
+        """
+        if self.can_read_dataflow:
+            return "custodian"
+        if self.can_read_representatives:
+            return "reporter"
+        return "none"
+
+    @property
+    def is_usable(self) -> bool:
+        """True if the key authenticates and can reach at least one endpoint."""
+        return self.role != "none"
+
+    @property
+    def can_discover_datasets(self) -> bool:
+        """True if dataset identifiers can be looked up by name.
+
+        Both roles can. Custodian keys read the dataflow unscoped; reporter
+        keys must send ``providerId`` and then see only their own reporting
+        datasets, so they need a provider-scoped client
+        (:meth:`~reportnet.DataflowClient.for_provider` or
+        :meth:`~reportnet.DataflowClient.find_reporter`).
+        """
+        return self.is_usable
+
+    @property
+    def needs_provider_scope(self) -> bool:
+        """True if reads must be scoped to a provider to be permitted.
+
+        Reporter keys are refused an unscoped dataflow read.
+        """
+        return self.role == "reporter"
+
+    @property
+    def wants_provider_id(self) -> bool:
+        """True if BigData writes must carry ``providerId``.
+
+        Verified live on dataflow 2003: a Reporter key is refused without
+        it, a custodian key is refused with it.
+        """
+        return self.role == "reporter"
+
+    def summary(self) -> str:
+        if not self.is_usable:
+            return f"dataflow {self.dataflow_id}: key not usable"
+        extra = "; reads must be provider-scoped" if self.needs_provider_scope else ""
+        return f"dataflow {self.dataflow_id}: {self.role} key{extra}"
 
 
 # ── Schema models ─────────────────────────────────────────────────────────────

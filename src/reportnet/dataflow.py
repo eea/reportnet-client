@@ -14,9 +14,15 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, Literal, Union
 
 from ._log import get_logger
-from .exceptions import CodelistResolutionError, ReportnetError
+from .exceptions import (
+    AuthError,
+    CodelistResolutionError,
+    DiscoveryNotPermittedError,
+    ReportnetError,
+)
 from .jobs import JobHandle, JobStatus
 from .models import (
+    Capabilities,
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
@@ -82,19 +88,40 @@ class DataflowClient:
         return override if override is not None else self._provider_id
 
     def _pid_bigdata_safe(self, override: int | None) -> int | None:
-        """Like :meth:`_pid`, but never auto-fills the stored provider_id for
-        BigData (DLT2) dataflows.
+        """Like :meth:`_pid`, but decides whether BigData wants providerId.
 
-        Confirmed live against a BigData dataflow: the API 403s on
-        etlExport/importFileData whenever providerId is present at all, even
-        when it correctly matches the dataset's own owner. Only used by
-        methods where this has been verified; other endpoints still use
-        :meth:`_pid`.
+        **Whether BigData accepts or requires ``providerId`` depends on the
+        key's role, not on the backend.** Both directions are confirmed live on
+        dataflow 2003:
+
+        =====================  ==========================================
+        Key role               ``importFileData`` on BigData
+        =====================  ==========================================
+        Custodian-level        ``providerId`` present  -> 403
+        Reporter          ``providerId`` absent   -> 403 (job 248505
+                               succeeded once it was sent)
+        =====================  ==========================================
+
+        There is no endpoint that reports the key's role, so this uses the
+        best available proxy: whether the key may read ``GET /dataflow/v1/{id}``.
+        A custodian-level key can; a reporter-scoped key is 403'd there. So a
+        refused backend lookup is itself the signal that this is a reporter
+        key, and reporter keys are the ones that *need* providerId.
+
+        The proxy can be wrong, so callers that can safely retry — see
+        :meth:`import_file` — flip the choice once on a 403 rather than
+        treating it as fatal.
         """
         if override is not None:
             return override
         if self._provider_id is None:
             return None
+        if self.capabilities().wants_provider_id:
+            logger.debug(
+                "reporter-scoped key on dataflow %s; sending providerId=%s",
+                self._dataflow_id, self._provider_id,
+            )
+            return self._provider_id
         return None if self.is_big_dataflow() else self._provider_id
 
     def for_provider(self, provider_id: int) -> "DataflowClient":
@@ -166,8 +193,12 @@ class DataflowClient:
         and ``get_test_datasets`` all read this same endpoint — reach for this
         when you need more than one of them, to avoid repeating the round-trip.
 
-        Note that ``reporting_datasets`` here is **not** filtered by this
-        client's ``provider_id``; use :meth:`get_reporting_datasets` for that.
+        Custodian keys read the whole dataflow. Reporter keys are refused
+        unless ``providerId`` is sent, and then receive only their own
+        reporting datasets, so a provider-scoped client (via
+        :meth:`for_provider` or :meth:`find_reporter`) is required for them.
+        This method sends the stored ``provider_id`` automatically if the
+        unscoped read is refused.
 
         Example::
 
@@ -175,11 +206,52 @@ class DataflowClient:
             print(contents.info.name)
             print(len(contents.reporting_datasets), "reporting datasets")
         """
-        return self._client.get_dataflow_contents(dataflow_id=self._dataflow_id)
+        try:
+            return self._client.get_dataflow_contents(dataflow_id=self._dataflow_id)
+        except DiscoveryNotPermittedError:
+            raise
+        except AuthError as exc:
+            if self._provider_id is None:
+                raise DiscoveryNotPermittedError(
+                    exc.status_code, self._discovery_hint()
+                ) from exc
+            logger.debug(
+                "dataflow %s not readable unscoped; retrying with providerId=%s",
+                self._dataflow_id, self._provider_id,
+            )
+            try:
+                return self._client.get_dataflow_contents(
+                    dataflow_id=self._dataflow_id, provider_id=self._provider_id
+                )
+            except AuthError as scoped_exc:
+                raise DiscoveryNotPermittedError(
+                    scoped_exc.status_code, self._discovery_hint()
+                ) from scoped_exc
+
+    def capabilities(self) -> Capabilities:
+        """Return what this API key may do on this dataflow. See
+        :meth:`ReportnetClient.capabilities <reportnet.ReportnetClient.capabilities>`."""
+        return self._client.capabilities(dataflow_id=self._dataflow_id)
+
+    def _discovery_hint(self) -> str:
+        """Explain a discovery 403 in terms the caller can act on."""
+        if self._provider_id is None:
+            return (
+                f"Reading dataflow {self._dataflow_id} was refused. Reporter keys must "
+                f"identify which provider they are reading for. Scope the client first, "
+                f"with find_reporter('XX') or for_provider(id), and retry. Custodian "
+                f"keys read the dataflow unscoped."
+            )
+        return (
+            f"Reading dataflow {self._dataflow_id} was refused both unscoped and with "
+            f"providerId={self._provider_id}. Check that this key belongs to that "
+            f"provider. Operations taking a dataset id directly (get_schema, "
+            f"import_file, validate) do not require this call."
+        )
 
     def get_dataflow(self) -> DataflowInfo:
         """Return name, type and status of this dataflow."""
-        return self._client.get_dataflow(dataflow_id=self._dataflow_id)
+        return self.get_dataflow_contents().info
 
     def get_reporters(self) -> list[Reporter]:
         """Return the list of countries/organisations registered for this dataflow."""
@@ -203,7 +275,7 @@ class DataflowClient:
             # Unscoped — returns every reporter's datasets
             all_ds = flow.get_reporting_datasets()
         """
-        all_ds = self._client.get_reporting_datasets(dataflow_id=self._dataflow_id)
+        all_ds = list(self.get_dataflow_contents().reporting_datasets)
         if self._provider_id is not None:
             return [ds for ds in all_ds if ds.provider_id == self._provider_id]
         return all_ds
@@ -309,7 +381,7 @@ class DataflowClient:
             # [ReferenceDataset(id=93975, name='Reference Dataset - Codelist', ...)]
             codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=ref_ds[0].id)
         """
-        return self._client.get_reference_datasets(dataflow_id=self._dataflow_id)
+        return list(self.get_dataflow_contents().reference_datasets)
 
     def get_test_datasets(self) -> list[TestDataset]:
         """Return all test datasets for this dataflow.
@@ -323,7 +395,7 @@ class DataflowClient:
             # [TestDataset(id=93953, name='Test Dataset - Table1a', ...)]
             flow.import_file(dataset_id=test_ds[0].id, file="sample.csv")
         """
-        return self._client.get_test_datasets(dataflow_id=self._dataflow_id)
+        return list(self.get_dataflow_contents().test_datasets)
 
     def is_big_dataflow(self) -> bool:
         """Return True if this is a BigData (DLT2) dataflow.
@@ -349,22 +421,112 @@ class DataflowClient:
     ) -> JobHandle:
         """POST /dataset/v2/importFileData/{datasetId} — multipart upload.
 
-        Unlike other methods on this class, ``provider_id`` is not auto-filled
-        from the stored ``provider_id`` for BigData (DLT2) dataflows — the API
-        403s if ``providerId`` is present at all, even the correct one. See
-        :meth:`etl_export` for the same behavior on the export side.
+        Whether BigData wants ``providerId`` depends on the key's role, not the
+        backend: a custodian-level key is 403'd when it is present, a Reporter
+        key when it is absent. :meth:`_pid_bigdata_safe` infers the role, and
+        this method **retries once with the opposite choice** if the inference
+        was wrong.
+
+        The retry is safe: a 403 means the request was rejected outright, so
+        nothing was written and no duplicate can result. Passing
+        ``provider_id`` explicitly disables it — an explicit choice is
+        honoured, not second-guessed.
         """
-        return self._client.import_file(
-            dataset_id=dataset_id,
-            dataflow_id=self._dataflow_id,
-            file=file,
-            filename=filename,
-            provider_id=self._pid_bigdata_safe(provider_id),
-            table_schema_id=table_schema_id,
-            replace=replace,
-            delimiter=delimiter,
-            integration_id=integration_id,
+        def _send(with_pid: int | None) -> JobHandle:
+            return self._client.import_file(
+                dataset_id=dataset_id,
+                dataflow_id=self._dataflow_id,
+                file=file,
+                filename=filename,
+                provider_id=with_pid,
+                table_schema_id=table_schema_id,
+                replace=replace,
+                delimiter=delimiter,
+                integration_id=integration_id,
+            )
+
+        return self._send_with_provider_id(
+            _send, override=provider_id, what=f"import into dataset {dataset_id}"
         )
+
+    def _send_with_provider_id(
+        self,
+        send: "Callable[[int | None], JobHandle]",
+        *,
+        override: int | None,
+        what: str,
+    ) -> JobHandle:
+        """Call *send* with the right ``providerId``, flipping once on a 403.
+
+        Whether Reportnet requires or rejects ``providerId`` depends on the
+        key's role, which cannot be queried directly — see
+        :meth:`_pid_bigdata_safe`. When the inferred choice is refused, the
+        opposite is tried. That is safe because a 403 means the request was
+        rejected outright, so nothing happened and no duplicate can result.
+
+        An explicit *override* is honoured and never second-guessed.
+        """
+        pid = self._pid_bigdata_safe(override)
+        try:
+            return send(pid)
+        except AuthError:
+            # Only the auto-filled case is ambiguous enough to retry.
+            if override is not None or self._provider_id is None:
+                raise
+            alternative = None if pid is not None else self._provider_id
+            if alternative == pid:
+                raise
+            logger.warning(
+                "%s was refused with providerId=%s; retrying with providerId=%s — "
+                "whether Reportnet requires or rejects it depends on the key's role",
+                what, pid, alternative,
+            )
+            return send(alternative)
+
+    def verify_import(self, *, dataset_id: int) -> dict[str, dict[str, object]]:
+        """Return what the last import actually wrote, keyed by **table name**.
+
+        A FINISHED job is not evidence that data landed — Reportnet can accept
+        a request, run it, report FINISHED and write nothing. This reads
+        ``getImportRelatedStatistics`` and joins it to the dataset schema, so
+        you get table names instead of schema IDs.
+
+        Works with reporter-scoped keys, which cannot export and therefore have
+        no other way to confirm an import.
+
+        Returns:
+            ``{table_name: {"records": int | None, "last_import": datetime | None,
+            "file_extension": str | None}}``, one entry per table in the
+            schema. ``records`` is ``None`` for tables never imported into.
+
+        Example::
+
+            it.import_file(dataset_id=108953, file=df, table_schema_id=tid).wait()
+            it.verify_import(dataset_id=108953)["Reporter"]
+            # {'records': 1, 'last_import': datetime(...), 'file_extension': 'csv'}
+        """
+        from datetime import datetime, timezone
+
+        stats = self._client.get_import_statistics(
+            dataset_id=dataset_id, dataflow_id=self._dataflow_id
+        )
+        schema = self.get_schema(dataset_id=dataset_id)
+
+        def _when(raw: object) -> "datetime | None":
+            # The API reports epoch milliseconds.
+            if not isinstance(raw, (int, float)):
+                return None
+            return datetime.fromtimestamp(raw / 1000, tz=timezone.utc)
+
+        result: dict[str, dict[str, object]] = {}
+        for table in schema.tables:
+            entry = stats.get(table.id) or {}
+            result[table.name] = {
+                "records": entry.get("numberOfRecordsImported"),
+                "last_import": _when(entry.get("lastImportDate")),
+                "file_extension": entry.get("fileExtension"),
+            }
+        return result
 
     def import_frames(
         self,
@@ -491,21 +653,43 @@ class DataflowClient:
         # the two scoping decisions below both depend on knowing it. The lookup
         # is cached on the shared client, so this costs no extra request.
         if version is None:
-            version = 4 if self.is_big_dataflow() else 3
+            try:
+                version = 4 if self.is_big_dataflow() else 3
+            except AuthError:
+                # Same failure mode the import path guards against: the backend
+                # lookup reads GET /dataflow/v1/{id}, which a reporter-scoped
+                # key cannot. Without this the call fails reporting that URL
+                # rather than the export endpoint, which is actively misleading.
+                version = 4
+                logger.warning(
+                    "cannot read dataflow %s to detect its backend (not authorised); "
+                    "defaulting to etlExport v%d. Pass version= explicitly if this "
+                    "dataflow is Citus (v3).",
+                    self._dataflow_id, version,
+                )
         # v3 (Citus) uses dataProviderCodes (country code) instead of providerId.
         # v4/v5 (BigData) reject providerId outright (403) for reporter-level
         # keys, so — unlike other methods — it is never auto-filled from the
         # stored provider_id here; only an explicit override is forwarded.
+        # v3 also accepts dataProviderCodes as a *filter*, but it does not
+        # authorise the call on its own — verified live: dataProviderCodes
+        # alone is 403, providerId alone succeeds.
         dpc = data_provider_codes or (self._country_code if version == 3 else None)
-        pid = provider_id if version != 3 else None
-        return self._client.etl_export(
-            dataset_id=dataset_id,
-            dataflow_id=self._dataflow_id,
-            provider_id=pid,
-            data_provider_codes=dpc,
-            table_schema_id=table_schema_id,
-            include_attachments=include_attachments,
-            version=version,
+        resolved_version = version
+
+        def _send(with_pid: int | None) -> JobHandle:
+            return self._client.etl_export(
+                dataset_id=dataset_id,
+                dataflow_id=self._dataflow_id,
+                provider_id=with_pid,
+                data_provider_codes=dpc,
+                table_schema_id=table_schema_id,
+                include_attachments=include_attachments,
+                version=resolved_version,
+            )
+
+        return self._send_with_provider_id(
+            _send, override=provider_id, what=f"export of dataset {dataset_id}"
         )
 
     def export_file(
@@ -604,7 +788,9 @@ class DataflowClient:
         """Trigger validation, wait for it to finish, and return structured results.
 
         Combines :meth:`add_validation_job` + :meth:`~reportnet.JobHandle.wait` +
-        :meth:`list_group_validations_dl` in one call.
+        the listing endpoint for this dataflow's backend in one call —
+        :meth:`list_group_validations_dl` for BigData, :meth:`list_group_validations`
+        for Citus. The two are not interchangeable.
 
         Args:
             dataset_id: Dataset to validate.
@@ -637,8 +823,49 @@ class DataflowClient:
         """
         handle = self.add_validation_job(dataset_id=dataset_id, provider_id=provider_id)
         handle.wait(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
-        raw = self.list_group_validations_dl(dataset_id=dataset_id, provider_id=provider_id)
+        raw = self._list_group_validations_for_backend(
+            dataset_id=dataset_id, provider_id=provider_id
+        )
         return ValidationResult._from_raw(dataset_id, raw)
+
+    def _list_group_validations_for_backend(
+        self,
+        *,
+        dataset_id: int,
+        provider_id: int | None,
+    ) -> dict[str, object]:
+        """Read validation results from the endpoint matching this backend.
+
+        ``listGroupValidationsDL`` is the BigData variant and
+        ``listGroupValidations`` the Citus one; they are not interchangeable.
+        :meth:`validate` used to call the DL endpoint unconditionally, which
+        is wrong for every Citus dataflow.
+
+        If the backend cannot be determined (a reporter-scoped key may not be
+        able to read the dataflow), the DL endpoint is tried first and the
+        Citus one used as a fallback, so neither backend is left unserved.
+        """
+        try:
+            is_big = self.is_big_dataflow()
+        except AuthError:
+            logger.warning(
+                "cannot read dataflow %s to detect its backend (not authorised); "
+                "trying listGroupValidationsDL then falling back to listGroupValidations",
+                self._dataflow_id,
+            )
+            try:
+                return self.list_group_validations_dl(
+                    dataset_id=dataset_id, provider_id=provider_id
+                )
+            except ReportnetError:
+                return self.list_group_validations(
+                    dataset_id=dataset_id, provider_id=provider_id
+                )
+        if is_big:
+            return self.list_group_validations_dl(
+                dataset_id=dataset_id, provider_id=provider_id
+            )
+        return self.list_group_validations(dataset_id=dataset_id, provider_id=provider_id)
 
     def download_validation_snapshot(
         self,

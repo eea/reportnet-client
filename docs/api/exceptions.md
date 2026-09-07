@@ -18,6 +18,8 @@ ReportnetError
 
 ::: reportnet.AuthError
 
+::: reportnet.DiscoveryNotPermittedError
+
 ::: reportnet.DatasetLockedError
 
 ::: reportnet.RateLimitError

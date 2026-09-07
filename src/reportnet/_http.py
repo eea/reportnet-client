@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 import time
 from typing import Any
 
@@ -14,6 +15,17 @@ logger = get_logger(__name__)
 _RETRYABLE_5XX = frozenset({500, 502, 503, 504})
 _MAX_RETRIES = 3
 _BASE_DELAY = 1.0
+
+# Shapes a gateway-wrapped auth failure takes inside a 500 body. Confirmed
+# live in two forms:
+#   {"message":"status 403 reading JobControllerZuul#addImportJob(...)"}
+#   ...an inner payload echoing "401"/UNAUTHORIZED
+_WRAPPED_AUTH_RE = re.compile(
+    r"""UNAUTHORIZED|FORBIDDEN"""      # inner status text
+    r"""|["']40[13]["']"""             # "401" / '403' as a quoted token
+    r"""|\bstatus["']?\s*[:=]?\s*40[13]\b""",  # status 403 / "status":401
+    re.IGNORECASE,
+)
 
 
 def _backoff(attempt: int) -> float:
@@ -101,15 +113,19 @@ class HttpSession:
 def _is_wrapped_auth_500(response: httpx.Response) -> bool:
     """True if a 500 is actually a wrapped auth failure.
 
-    Reportnet gateway occasionally wraps auth failures as HTTP 500 (the inner
-    service returns 401 but the gateway swallows it). Used both to raise
-    AuthError instead of a generic APIError, and so the retry loop does not
-    waste attempts on a bad API key — must stay in sync between the two.
+    The Reportnet gateway sometimes wraps auth failures as HTTP 500: the inner
+    service returns 401 *or 403* and the gateway reports its own failure to
+    read that response. Used both to raise AuthError instead of a generic
+    APIError, and so the retry loop does not waste attempts on a permission
+    error — must stay in sync between the two.
+
+    403 matters as much as 401: a key with read but not write rights hits this
+    on every import, and treating it as a transient 500 costs three retries
+    with back-off before surfacing the wrong exception type.
     """
     if response.status_code != 500:
         return False
-    body = response.text
-    return "UNAUTHORIZED" in body or '"401"' in body or "'401'" in body
+    return _WRAPPED_AUTH_RE.search(response.text) is not None
 
 
 def _raise_for_status(response: httpx.Response) -> None:

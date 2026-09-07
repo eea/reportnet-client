@@ -47,4 +47,5 @@ REVIEW.md
 site/
 
 # Scratch notebooks / scripts — anything starting with "+_" is local-only.
+# These may hold credentials; never commit them.
 +_*

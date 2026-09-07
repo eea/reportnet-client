@@ -42,14 +42,16 @@ plugins:
 nav:
   - Home: index.md
   - Concepts: concepts.md
-  - Guides:
+  - Reporter guide:
+    - Permissions: guides/capabilities.md
     - Dataset schema: guides/schema.md
     - Import data: guides/import.md
     - Validate a dataset: guides/validation.md
-    - Export data: guides/export.md
-    - Reference datasets: guides/reference-datasets.md
     - Provider helpers: guides/providers.md
     - Logging: guides/logging.md
+  - Custodian (admin):
+    - Export data: guides/export.md
+    - Reference datasets: guides/reference-datasets.md
   - API notes: api-notes.md
   - Changelog: changelog.md
   - Notebooks: notebooks.md

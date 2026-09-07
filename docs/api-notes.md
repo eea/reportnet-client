@@ -117,18 +117,93 @@ but 404s for API-key auth. That's why
 [`is_big_dataflow()`][reportnet.ReportnetClient.is_big_dataflow] reads the
 `bigData` field from `GET /dataflow/v1/{dataflowId}` instead.
 
-## Two confirmed `providerId` traps
+## `providerId` on BigData depends on the key's ROLE, not the backend
 
-Both discovered by live testing, both encoded in the client:
+This was previously recorded here as "BigData rejects `providerId`". That is
+only half true, and the missing half makes imports impossible for the role most
+likely to be doing them. Both directions are confirmed live on dataflow 2003:
 
-- **v4/v5 `etlExport` and `importFileData` reject `providerId` outright (403)**
-  for reporter-level keys — even when the value correctly matches the dataset's
-  own owner. `datasetId` already identifies the provider. This is why
-  `DataflowClient` deliberately does *not* auto-fill `provider_id` on those
-  calls for BigData dataflows.
+| Key role | `importFileData`, `etlExport` **and** `GET /dataflow/v1/{id}` |
+|---|---|
+| Custodian-level | `providerId` **present** → 403 (writes/exports) |
+| Reporter | `providerId` **absent** → 403 |
+
+The same parameter governs all three operations. It was missed three times
+because each was investigated separately; `providerId` is the single thing a
+reporter-scoped key needs on every one of them.
+
+Isolated on `etlExport` for a reporter key, v3 and v4 alike:
+
+| Parameters sent | Result |
+|---|---|
+| `providerId` (with or without `dataProviderCodes`) | **200** |
+| `dataProviderCodes` only | 403 |
+| neither | 403 |
+
+So `dataProviderCodes` is a *filter*, not an authorisation — only `providerId`
+grants the call.
+
+A Reporter key for IT (provider 64) was refused without `providerId` and
+accepted with it — job 248505 ran to FINISHED.
+
+**There is no endpoint that reports a key's role.** The usable proxy is whether
+the key may read `GET /dataflow/v1/{id}`: custodian-level keys can, and
+reporter-scoped keys are 403'd. `DataflowClient._pid_bigdata_safe` uses exactly
+that signal, and `import_file` retries once with the opposite choice if the
+inference was wrong — safe, because a 403 means nothing was written.
+
 - **v3 (Citus) `etlExport` uses `dataProviderCodes`** (an ISO country code)
   rather than `providerId`. Filled in automatically when the client came from
   `find_reporter()`.
+
+## What a Reporter key can and cannot do
+
+Measured on dataflow 2003 (BigData) with a Reporter key for IT:
+
+| Capability | Result |
+|---|---|
+| `GET /dataschema/v1/datasetId/{id}` (own + reference datasets) | ✅ |
+| `GET /dataschema/v1/dataset/{id}/exportFieldSchemas` (schema as ZIP) | ✅ |
+| `GET /dataset/checkImportProcess/{id}` | ✅ |
+| `GET /dataset/getImportRelatedStatistics/{id}` — row counts per table | ✅ |
+| `GET /dataset/getAvailableForManualEditingTables/{id}` | ✅ |
+| `GET /representative/v1/dataflow/{id}` | ✅ |
+| `GET /dataflow/v1/{id}/getmetabase` — name, status, `bigData` | ✅ |
+| `GET /dataflow/v1/dataflowName/{id}` | ✅ |
+| `POST /dataset/v2/importFileData/{id}` **with** `providerId` | ✅ |
+| `PUT /orchestrator/jobs/addValidationJob/{id}` + `listGroupValidationsDL` | ✅ |
+| `DELETE /dataset/v1/{id}/deleteTableData/{tableSchemaId}` | ✅ |
+| `GET /dataflow/v1/{id}` **without** `providerId` | ❌ 403 |
+| `GET /dataflow/v1/{id}?providerId=<own>` | ✅ own reporting datasets + reference datasets |
+| `GET /dataflow/v1/{id}?providerId=<another provider>` | ❌ 403 |
+| `GET /dataset/v{3,4,5}/etlExport/{id}` on its **own reporting dataset**, **with** `providerId` | ✅ |
+| The same export **without** `providerId` | ❌ 403 |
+| Exporting **reference / EU / data-collection / test** datasets | ❌ 403 (role table forbids it) |
+| `exportFile`, `exportFileDL` | ❌ 403 |
+| `etlImport`, v1 `importFileData`, `generateImportPresignedUrl` | ❌ 403 |
+| `getSimpleSchema`, `getTableSchemasIds`, `list-imported-files`, `preparations` | ❌ 403 |
+| `snapshot/v1/historicReleases`, `document/v1/dataflow/{id}`, `weblink/v1/dataflow/{id}` | ❌ 403 |
+
+That list is exhaustive for reads: every public `GET` in the Swagger specs
+taking only a dataflow or dataset id was probed.
+
+Two consequences worth designing around:
+
+1. **A reporter discovers its own dataset IDs by sending `providerId`.**
+   The unscoped read is 403; the scoped read returns that provider's reporting
+   datasets and the dataflow's reference datasets, with names and statuses.
+   Another provider's id is refused, so the scoping is enforced rather than
+   advisory.
+2. **A reporter *can* export its own reporting dataset** — provided
+   `providerId` is sent. It cannot export reference, EU, data-collection or
+   test datasets; the role tables (below) forbid those.
+
+   Independently, `GET /dataset/getImportRelatedStatistics/{id}` gives per-table
+   `{"lastImportDate", "numberOfRecordsImported", "fileExtension"}`. Since a
+   FINISHED job is *not* evidence that data landed, that is the cheap check
+   after an upload — wrapped as
+   [`verify_import()`][reportnet.DataflowClient.verify_import] — while a full
+   export is the expensive one.
 
 ## Response quirks
 
@@ -136,9 +211,61 @@ Both discovered by live testing, both encoded in the client:
   job ID, not the `{"jobId": ..., "pollingUrl": ...}` object other async
   operations return. The client synthesises the polling URL.
 - Auth failures are sometimes wrapped as **HTTP 500** by the gateway, with
-  `UNAUTHORIZED` or `401` in the body. The client detects this and raises
-  `AuthError` rather than retrying.
+  `UNAUTHORIZED`, `401` **or `403`** in the body. The client detects this and
+  raises `AuthError` rather than retrying. The 403 form looks like this — note
+  the real status is only visible inside `message`:
+
+  ```json
+  {"status": 500, "error": "Internal Server Error",
+   "message": "status 403 reading JobControllerZuul#addImportJob(...)",
+   "path": "/dataset/v2/importFileData/108953"}
+  ```
+
 - `numberOfRecords` in validation results arrives as a **string**, not a number.
+
+## `etlImport` silently discards records without `countryCode`
+
+Every record in an `etlImport` body **must** carry `countryCode`:
+
+```json
+{"tables": [{"tableName": "T",
+             "records": [{"countryCode": "IT", "fields": [...]}]}]}
+```
+
+Omit it and the request is accepted, a job is created, and that job reaches
+**`FINISHED`** — having imported **nothing**. There is no error, no warning and
+no partial result; the only way to detect it is to re-export and count rows.
+
+`ReportnetClient.etl_import` warns when any record lacks the field, but the
+deeper lesson generalises: **on this API a `FINISHED` job is not evidence that
+data landed.** Verify writes by reading them back.
+
+Two further limits found while loading a real payload
+(dataflow 1570 → 2003, September 2026):
+
+- The documented `etlImport` payload ceiling is 220 MB, but an **85 MB** body
+  failed with `HTTP 500 COMMAND_EXCEPTION`. Chunk large imports, or prefer
+  `importFileData`, whose CSV encoding is far more compact than JSON-wrapped
+  GeoJSON.
+- `etlImport` is **Citus-only**. On a BigData dataflow `importFileData` is the
+  only wrapped write path — `etlImportDL` exists but is not wrapped yet.
+
+## A reporter-scoped key may not read `/dataflow/v1/{id}`
+
+Keys differ in scope in a way that cuts across the client's layering. One key
+tested on dataflow 2003 could read `/representative/v1/dataflow/{id}` and
+`/dataschema/v1/datasetId/{id}` but got **403 on `/dataflow/v1/{id}`**.
+
+That single endpoint backs `get_dataflow`, `get_reporting_datasets`,
+`is_big_dataflow`, `dataset()`, `ping()` and — indirectly — `import_file`,
+which consults `is_big_dataflow()` to decide whether to send `providerId`.
+Before this was handled, importing with such a key failed at the preflight and
+reported a 403 against `/dataflow/v1/{id}`, *not* the endpoint being called —
+badly misleading when debugging.
+
+`DataflowClient` now degrades instead: when the backend cannot be read it omits
+`providerId` (whose *presence* is what BigData rejects) and `validate()` tries
+the DL listing endpoint before falling back to the Citus one.
 
 ## Endpoints that exist but aren't wrapped yet
 
@@ -184,3 +311,34 @@ PY
 ```
 
 No API key is needed — the spec endpoints are public.
+
+
+## Swagger descriptions carry authoritative role tables
+
+Each operation's `description` field lists the roles allowed **per dataset
+type**. This is the closest thing to an authoritative permission model the API
+publishes, and it is not visible in the endpoint list — only in the operation
+detail. For example `GET /dataset/v4/etlExport/{datasetId}`:
+
+| Dataset type | Allowed roles |
+|---|---|
+| Reporting | CUSTODIAN, STEWARD, OBSERVER, REPORTER WRITE, REPORTER READ, LEAD REPORTER, STEWARD SUPPORT |
+| Test | CUSTODIAN, STEWARD, STEWARD SUPPORT |
+| Reference | CUSTODIAN, STEWARD, OBSERVER, STEWARD SUPPORT |
+| Design | CUSTODIAN, STEWARD, EDITOR WRITE, EDITOR READ |
+| EU | CUSTODIAN, STEWARD, OBSERVER, STEWARD SUPPORT |
+| Data collection | CUSTODIAN, STEWARD, OBSERVER, STEWARD SUPPORT |
+
+That table explains observed behaviour exactly: a reporter can export its own
+*reporting* dataset but not a *reference* one. `importFileData` has its own
+table (Reporting: LEAD REPORTER, REPORTER WRITE, NATIONAL COORDINATOR).
+
+**Read these before concluding a role cannot do something.** Extract them with:
+
+```bash
+curl -s https://api.reportnet.europa.eu/dataset/v2/api-docs | python3 -c "
+import json,sys
+spec=json.load(sys.stdin)
+for m,op in spec['paths']['/dataset/v4/etlExport/{datasetId}'].items():
+    print(op.get('description',''))"
+```

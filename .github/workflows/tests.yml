@@ -33,3 +33,27 @@ jobs:
 
       - name: Test
         run: uv run pytest -v
+
+  # The base matrix above installs no extras on purpose: `import reportnet`
+  # must work without geopandas/pandas, and only that job proves it. This job
+  # covers the other half — the optional-dependency branches in _util.py
+  # (geopandas geometry parsing, the pandas fallbacks) which were otherwise
+  # skipped in CI entirely.
+  test-optional-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install dependencies (with spatial extra)
+        run: uv sync --extra spatial
+
+      - name: Confirm the optional stack is actually installed
+        run: uv run python -c "import geopandas, pandas, shapely; print(geopandas.__version__)"
+
+      - name: Test
+        run: uv run pytest -v

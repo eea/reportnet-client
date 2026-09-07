@@ -14,13 +14,16 @@ can never disagree about how to talk to the API.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, Union
 
 from ._http import HttpSession
+from ._log import get_logger
 from ._util import to_file_tuple
 from .jobs import JobHandle
 from .models import (
+    Capabilities,
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
@@ -29,6 +32,8 @@ from .models import (
     ReportingDataset,
     TestDataset,
 )
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from .dataflow import DataflowClient
@@ -43,13 +48,22 @@ class ReportnetClient:
         self,
         api_key: str,
         base_url: str = PRODUCTION_URL,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ) -> None:
+        """Args:
+            timeout: HTTP request timeout in seconds. The default is generous
+                because GET /dataflow/v1/{id} is slow on large dataflows —
+                30s was low enough to ReadTimeout on one measured live, and a
+                timeout there also breaks every method that reads it. Raise it
+                further for very large dataflows.
+        """
         self._http = HttpSession(api_key=api_key, base_url=base_url, timeout=timeout)
         # bigData-ness is immutable for a given dataflow, so this is safe to keep
         # for the lifetime of the client. Shared with DataflowClient, which
         # delegates rather than keeping a second copy.
         self._big_data_cache: dict[int, bool] = {}
+        # A key's role never changes, so this is safe for the client's lifetime.
+        self._capabilities_cache: dict[int, Capabilities] = {}
 
     @classmethod
     def from_keyring(
@@ -58,7 +72,7 @@ class ReportnetClient:
         base_url: str | None = None,
         *,
         sandbox: bool = False,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ) -> "ReportnetClient":
         """Create a client using the API key stored in the system keychain.
 
@@ -98,11 +112,20 @@ class ReportnetClient:
         return DataflowClient(self, dataflow_id=dataflow_id, provider_id=provider_id)
 
     def ping(self, *, dataflow_id: int) -> bool:
-        """Return True if the API key is valid and the API is reachable.
+        """Return True if the API key is usable for *dataflow_id*.
 
-        Makes a single lightweight GET request.  Returns False on auth failure;
-        raises on network errors (so transient connectivity issues surface
-        as exceptions rather than a silent False).
+        Raises on network errors, so transient connectivity issues surface as
+        exceptions rather than a silent False.
+
+        A 403 is **not** treated as a bad key. Reporter-scoped keys are
+        forbidden from ``GET /dataflow/v1/{id}`` while being perfectly valid
+        for the endpoints they do own — verified live on
+        dataflow 2003, where a Reporter key 403s here yet imports
+        successfully. Reporting such a key as revoked sends users chasing a
+        credential problem that doesn't exist, so this falls back to the
+        representatives endpoint before giving up.
+
+        Only a 401, or a 403 from *both* probes, returns False.
 
         Example::
 
@@ -113,12 +136,74 @@ class ReportnetClient:
         try:
             self._http.get(f"/dataflow/v1/{dataflow_id}")
             return True
+        except AuthError as exc:
+            # Only a genuine 403 means "authenticated but not permitted here".
+            # A 401 — or a gateway-wrapped auth failure, which arrives as 500 —
+            # means the key itself is bad, and no other endpoint will accept it.
+            if exc.status_code != 403:
+                return False
+            logger.debug(
+                "ping: /dataflow/v1/%s returned 403; retrying via the representatives "
+                "endpoint, which reporter-scoped keys can read",
+                dataflow_id,
+            )
+        try:
+            self._http.get(f"/representative/v1/dataflow/{dataflow_id}")
+            logger.info(
+                "API key for dataflow %s is valid but not authorised for "
+                "GET /dataflow/v1/%s — typical of a reporter-scoped key",
+                dataflow_id, dataflow_id,
+            )
+            return True
         except AuthError:
             return False
 
+    def capabilities(self, *, dataflow_id: int) -> Capabilities:
+        """Probe what this API key is allowed to do on *dataflow_id*.
+
+        Reportnet has no endpoint reporting a key's role, and the role changes
+        how requests must be *built* — a Reporter key must send
+        ``providerId`` on BigData writes, a custodian key is refused if it
+        does. So the library probes: at most two cheap GETs, cached per client.
+
+        Example::
+
+            caps = client.capabilities(dataflow_id=2003)
+            print(caps.summary())      # "dataflow 2003: reporter key; cannot discover dataset IDs"
+        """
+        cached = self._capabilities_cache.get(dataflow_id)
+        if cached is not None:
+            return cached
+
+        from .exceptions import AuthError
+
+        can_read_dataflow = False
+        can_read_representatives = False
+        try:
+            self.get_dataflow_contents(dataflow_id=dataflow_id)
+            can_read_dataflow = True
+            can_read_representatives = True  # custodian keys can read both
+        except AuthError:
+            try:
+                self._http.get(f"/representative/v1/dataflow/{dataflow_id}")
+                can_read_representatives = True
+            except AuthError:
+                pass
+
+        caps = Capabilities(
+            dataflow_id=dataflow_id,
+            can_read_dataflow=can_read_dataflow,
+            can_read_representatives=can_read_representatives,
+        )
+        logger.info("capabilities: %s", caps.summary())
+        self._capabilities_cache[dataflow_id] = caps
+        return caps
+
     # ── Dataflow metadata ─────────────────────────────────────────────────────
 
-    def get_dataflow_contents(self, *, dataflow_id: int) -> DataflowContents:
+    def get_dataflow_contents(
+        self, *, dataflow_id: int, provider_id: int | None = None
+    ) -> DataflowContents:
         """GET /dataflow/v1/{dataflowId} — the whole payload, parsed in one pass.
 
         ``get_dataflow``, ``get_reporting_datasets``, ``get_reference_datasets``
@@ -126,13 +211,19 @@ class ReportnetClient:
         individually costs one HTTP round-trip each. Use this when you need more
         than one of them.
 
+        Reporter-scoped keys are refused without ``provider_id`` and permitted
+        with it, receiving only their own reporting datasets. Custodian keys
+        read the whole dataflow without it.
+
         Example::
 
             contents = client.get_dataflow_contents(dataflow_id=1619)
             contents.info.name
             contents.reporting_datasets
         """
-        contents = DataflowContents.from_dict(self._http.get(f"/dataflow/v1/{dataflow_id}").json())
+        params = {"providerId": provider_id} if provider_id is not None else None
+        response = self._http.get(f"/dataflow/v1/{dataflow_id}", params=params)
+        contents = DataflowContents.from_dict(response.json())
         self._big_data_cache[dataflow_id] = contents.info.big_data
         return contents
 
@@ -169,6 +260,43 @@ class ReportnetClient:
         """
         return list(self.get_dataflow_contents(dataflow_id=dataflow_id).test_datasets)
 
+    def get_dataflow_metabase(self, *, dataflow_id: int) -> DataflowInfo:
+        """GET /dataflow/v1/{dataflowId}/getmetabase — dataflow metadata only.
+
+        Returns the same fields as :meth:`get_dataflow` but **without** any
+        dataset lists (the API nulls them here). Its value is that reporter
+        keys may read it, while ``GET /dataflow/v1/{id}`` is 403 for them — so
+        it is how a reporter learns the dataflow's name, status and backend.
+        """
+        response = self._http.get(f"/dataflow/v1/{dataflow_id}/getmetabase")
+        return DataflowInfo.from_dict(response.json())
+
+    def get_import_statistics(self, *, dataset_id: int, dataflow_id: int) -> dict[str, Any]:
+        """GET /dataset/getImportRelatedStatistics/{datasetId} — what landed.
+
+        Returns a mapping of **table schema id** to
+        ``{"lastImportDate", "numberOfRecordsImported", "fileExtension"}``,
+        with nulls for tables never imported into.
+
+        This is the only way a reporter-scoped key can confirm an import
+        actually wrote data: exports are forbidden to them, and a FINISHED job
+        is not evidence that data landed. Use
+        :meth:`DataflowClient.verify_import <reportnet.DataflowClient.verify_import>`
+        for a table-name-friendly wrapper.
+
+        Example::
+
+            stats = client.get_import_statistics(dataset_id=108953, dataflow_id=2003)
+            stats["6a4504d0bde8560001232b6d"]
+            # {'lastImportDate': 1788769100000, 'numberOfRecordsImported': 1,
+            #  'fileExtension': 'csv'}
+        """
+        response = self._http.get(
+            f"/dataset/getImportRelatedStatistics/{dataset_id}",
+            params={"dataflowId": dataflow_id},
+        )
+        return response.json()  # type: ignore[no-any-return]
+
     def is_big_dataflow(self, *, dataflow_id: int) -> bool:
         """Return True if *dataflow_id* is a BigData (DLT2) dataflow.
 
@@ -177,11 +305,26 @@ class ReportnetClient:
         looks purpose-built for this but 404s for API-key auth regardless of
         the dataflow's actual BigData status, so it isn't used here.
 
+        Reporter-scoped keys are 403 on that endpoint, so this falls back to
+        ``getmetabase``, which they *can* read and which carries the same
+        ``bigData`` field. That makes backend detection work for every key.
+
         Cached per client — a dataflow never changes backend.
         """
+        from .exceptions import AuthError
+
         cached = self._big_data_cache.get(dataflow_id)
-        if cached is None:
+        if cached is not None:
+            return cached
+        try:
             cached = self.get_dataflow_contents(dataflow_id=dataflow_id).info.big_data
+        except AuthError:
+            logger.debug(
+                "dataflow %s not readable; reading bigData from getmetabase instead",
+                dataflow_id,
+            )
+            cached = self.get_dataflow_metabase(dataflow_id=dataflow_id).big_data
+            self._big_data_cache[dataflow_id] = cached
         return cached
 
     def close(self) -> None:
@@ -237,7 +380,13 @@ class ReportnetClient:
         tables: list[dict[str, object]],
         replace_data: bool = False,
     ) -> JobHandle:
-        """POST /dataset/v1/{datasetId}/etlImport — JSON body, Citus datasets only."""
+        """POST /dataset/v1/{datasetId}/etlImport — JSON body, Citus datasets only.
+
+        Every record must carry a ``countryCode``. Omitting it does *not* fail:
+        the job is accepted and reports ``FINISHED`` having imported nothing,
+        so a warning is raised here rather than letting the silence stand.
+        """
+        _warn_on_records_without_country_code(tables)
         response = self._http.post(
             f"/dataset/v1/{dataset_id}/etlImport",
             params={"dataflowId": dataflow_id, "replaceData": str(replace_data).lower()},
@@ -505,6 +654,38 @@ class ReportnetClient:
             params["providerId"] = provider_id
         response = self._http.get(path, params=params)
         return response.json()  # type: ignore[no-any-return]
+
+
+def _warn_on_records_without_country_code(tables: list[dict[str, Any]]) -> None:
+    """Warn if any etlImport record omits ``countryCode``.
+
+    The API drops such records and still reports the job FINISHED, so this is
+    the only signal the caller gets that nothing was written.
+    """
+    offenders: list[str] = []
+    for table in tables:
+        records = table.get("records") or []
+        if not isinstance(records, list):
+            continue
+        missing = sum(
+            1
+            for r in records
+            if isinstance(r, dict) and not r.get("countryCode")
+        )
+        if missing:
+            name = str(table.get("tableName", "<unnamed>"))
+            offenders.append(f"{name} ({missing}/{len(records)} records)")
+
+    if not offenders:
+        return
+    message = (
+        "etlImport records without countryCode: "
+        + ", ".join(offenders)
+        + ". The API silently discards these and still reports the job as "
+        "FINISHED — set countryCode on every record."
+    )
+    logger.warning(message)
+    warnings.warn(message, stacklevel=3)
 
 
 def _make_job(

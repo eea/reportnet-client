@@ -10,6 +10,20 @@ VPN-only, separate keys). Auth is a static `Authorization: ApiKey {key}` header 
 
 Licensed EUPL-1.2. The package is typed and ships `py.typed`.
 
+### Who the library is for
+
+**Reporters are the primary users** — they prepare and submit one
+country's or organisation's data. Custodians (dataflow admins) are secondary:
+supported, but they have dedicated tooling elsewhere. When designing an API or
+writing docs, the reporter path comes first and the custodian path is marked as
+admin.
+
+This matters technically, not just editorially: a Reporter key **cannot**
+list dataset IDs or export anything, so any feature routed through
+`GET /dataflow/v1/{id}` is custodian-only by construction. Check
+`flow.capabilities()` before assuming a call is available, and prefer designs
+that need only a `dataset_id`.
+
 ## Commands
 
 ```bash
@@ -131,7 +145,16 @@ degradation fallback. Never log headers — the API key lives there.
 **Name-based lookup** — `dataset(table_name)`, `datasets_by_table()` and
 `reference_dataset(name)` exist because real scripts were indexing by list
 position (`ds[0]`, `refs[3]`). `dataset()` requires a provider-scoped client,
-since table names repeat across reporters.
+since table names repeat across reporters. All of it reads
+`GET /dataflow/v1/{id}`, so it is **custodian-only** — reporter keys get
+`DiscoveryNotPermittedError`, which subclasses `AuthError` and carries a
+message telling the user to take the ID from the web UI.
+
+**Capabilities** — `flow.capabilities()` probes the key's role (at most two
+GETs, cached on `ReportnetClient`). `Capabilities.wants_provider_id` drives
+`_pid_bigdata_safe`; `can_discover_datasets` gates name lookup. There is no API
+endpoint reporting a role, so this is inferred from whether
+`GET /dataflow/v1/{id}` is readable. Don't replace it with a backend check.
 
 **Schema layer** — `get_schema()` returns a `DatasetSchema` of `TableSchema` /
 `FieldSchema` / `FieldType`. `TableSchema` carries the DataFrame helpers:
@@ -236,9 +259,26 @@ which is why guessing was replaced with a lookup.
 
 Two confirmed-live API quirks, both encoded in the code with comments:
 
-- **v4/v5 reject `providerId` outright (403)** for reporter-level keys, even when
-  it correctly matches the dataset's owner. `dataset_id` already identifies the
-  provider. Same for `importFileData` on BigData dataflows.
+- **`providerId` depends on the key's ROLE, not the backend, and applies to
+  `importFileData`, `etlExport` AND `GET /dataflow/v1/{id}`.** A reporter key
+  is 403 on the unscoped dataflow read and permitted with `providerId`,
+  receiving its own datasets only; `DataflowClient.get_dataflow_contents()`
+  retries scoped automatically. Reporters therefore *can* discover their
+  dataset ids — do not reinstate the claim that they cannot. Custodian-level keys are 403'd when
+  it is *present*; reporter keys when it is *absent* (both verified live on
+  2003). No endpoint reports the role, so `_pid_bigdata_safe` infers it from
+  whether the key may read `GET /dataflow/v1/{id}`, and both `import_file` and
+  `etl_export` go through `_send_with_provider_id`, which retries once with the
+  opposite choice. Don't "simplify" this back to a backend check, and don't
+  reintroduce the old rule that exports never auto-fill `providerId` — that
+  made exports impossible for reporters.
+  `dataProviderCodes` is a *filter*, not an authorisation: alone it 403s.
+
+- **Swagger operation `description` fields carry per-role permission tables**
+  (which roles may call an endpoint, per dataset type). They are authoritative
+  and explain observed 403s exactly — e.g. reporters may export a *reporting*
+  dataset but not a *reference* one. Check them before concluding a role can't
+  do something; see `docs/api-notes.md`.
 - **v3 (Citus)** uses `dataProviderCodes` (an ISO country code) instead, which is
   filled in automatically when the client came from `find_reporter()`.
 
