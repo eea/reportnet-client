@@ -135,20 +135,28 @@ for r in flow.get_reporters():
 
 ## 2. Dataset identifiers
 
-Reporter keys cannot list dataset identifiers. Reportnet restricts the
-endpoint that enumerates them to administrators. Take the identifier from the
-dataset URL in the web interface:
+A dataflow defines more than one dataset per reporter. List them by table name:
+
+```python
+me.datasets_by_table()
+# {'Descriptive data': ReportingDataset(id=108953, status='PENDING'),
+#  'Spatial data':     ReportingDataset(id=108958, status='PENDING')}
+
+ds = me.dataset("Descriptive data")
+ds.id
+```
+
+Reporter keys see only their own datasets. The client must be provider-scoped
+for this, which `find_reporter()` does. An unscoped client raises
+`DiscoveryNotPermittedError` naming the two ways to scope it.
+
+Identifiers also appear in the dataset URL in the web interface, if they are
+more convenient to copy:
 
 ```
 https://reportnet.europa.eu/dataflow/1234/dataset/56789
                                                   ^^^^^ dataset identifier
 ```
-
-A dataflow typically defines more than one dataset per reporter.
-
-Calls that require enumeration raise `DiscoveryNotPermittedError` when the key
-is reporter-scoped. Operations that take a dataset identifier directly are
-unaffected.
 
 ## 3. Schema
 
@@ -286,7 +294,7 @@ probing and adjusts request parameters accordingly:
 
 ```python
 print(flow.capabilities().summary())
-# "dataflow 1234: reporter key; cannot discover dataset IDs"
+# "dataflow 1234: reporter key; reads must be provider-scoped"
 ```
 
 | Operation | Reporter | Custodian |
@@ -297,7 +305,8 @@ print(flow.capabilities().summary())
 | Validate, read results | yes | yes |
 | Resolve country code | yes | yes |
 | Export own reporting dataset | yes | yes |
-| List dataset identifiers | no | yes |
+| List own dataset identifiers | yes | yes |
+| List all reporters' datasets | no | yes |
 | Export reference datasets | no | yes |
 | Resolve code lists | no | yes |
 | Read release history | no | yes |

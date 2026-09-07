@@ -193,8 +193,12 @@ class DataflowClient:
         and ``get_test_datasets`` all read this same endpoint — reach for this
         when you need more than one of them, to avoid repeating the round-trip.
 
-        Note that ``reporting_datasets`` here is **not** filtered by this
-        client's ``provider_id``; use :meth:`get_reporting_datasets` for that.
+        Custodian keys read the whole dataflow. Reporter keys are refused
+        unless ``providerId`` is sent, and then receive only their own
+        reporting datasets, so a provider-scoped client (via
+        :meth:`for_provider` or :meth:`find_reporter`) is required for them.
+        This method sends the stored ``provider_id`` automatically if the
+        unscoped read is refused.
 
         Example::
 
@@ -207,7 +211,22 @@ class DataflowClient:
         except DiscoveryNotPermittedError:
             raise
         except AuthError as exc:
-            raise DiscoveryNotPermittedError(exc.status_code, self._discovery_hint()) from exc
+            if self._provider_id is None:
+                raise DiscoveryNotPermittedError(
+                    exc.status_code, self._discovery_hint()
+                ) from exc
+            logger.debug(
+                "dataflow %s not readable unscoped; retrying with providerId=%s",
+                self._dataflow_id, self._provider_id,
+            )
+            try:
+                return self._client.get_dataflow_contents(
+                    dataflow_id=self._dataflow_id, provider_id=self._provider_id
+                )
+            except AuthError as scoped_exc:
+                raise DiscoveryNotPermittedError(
+                    scoped_exc.status_code, self._discovery_hint()
+                ) from scoped_exc
 
     def capabilities(self) -> Capabilities:
         """Return what this API key may do on this dataflow. See
@@ -216,13 +235,18 @@ class DataflowClient:
 
     def _discovery_hint(self) -> str:
         """Explain a discovery 403 in terms the caller can act on."""
+        if self._provider_id is None:
+            return (
+                f"Reading dataflow {self._dataflow_id} was refused. Reporter keys must "
+                f"identify which provider they are reading for. Scope the client first, "
+                f"with find_reporter('XX') or for_provider(id), and retry. Custodian "
+                f"keys read the dataflow unscoped."
+            )
         return (
-            f"This API key may not read dataflow {self._dataflow_id} "
-            f"(GET /dataflow/v1/{self._dataflow_id} returned 403), which is the only "
-            f"endpoint that lists dataset IDs. This is normal for a Reporter key. "
-            f"Take the dataset ID from the Reportnet web UI — it is in the URL when you "
-            f"open the dataset — and pass dataset_id= directly. Methods that need only a "
-            f"dataset ID (get_schema, import_file, validate) work normally."
+            f"Reading dataflow {self._dataflow_id} was refused both unscoped and with "
+            f"providerId={self._provider_id}. Check that this key belongs to that "
+            f"provider. Operations taking a dataset id directly (get_schema, "
+            f"import_file, validate) do not require this call."
         )
 
     def get_dataflow(self) -> DataflowInfo:

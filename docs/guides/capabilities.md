@@ -7,7 +7,7 @@ lifetime of the client.
 ```python
 caps = flow.capabilities()
 print(caps.summary())
-# "dataflow 1234: reporter key; cannot discover dataset IDs"
+# "dataflow 1234: reporter key; reads must be provider-scoped"
 ```
 
 ::: reportnet.Capabilities
@@ -35,7 +35,8 @@ the request is refused. `provider_id` does not need to be passed explicitly.
 | Validate and read results | yes | yes |
 | Resolve country code to provider | yes | yes |
 | Export own reporting dataset | yes | yes |
-| List dataset identifiers | no | yes |
+| List own dataset identifiers | yes | yes |
+| List all reporters' datasets | no | yes |
 | Export reference, EU and data-collection datasets | no | yes |
 | Resolve code lists | no | yes |
 | Read release history | no | yes |
@@ -46,13 +47,22 @@ the API's own operation descriptions are reproduced in
 
 ## Dataset identifiers
 
-Enumerating datasets requires administrator permissions. Reporter keys must
-take dataset identifiers from the dataset URL in the web interface.
+Reading the dataflow requires `providerId` for reporter keys. With it, the
+response contains that provider's own reporting datasets and the dataflow's
+reference datasets. Requesting another provider's identifier returns HTTP 403.
 
-Calls that require enumeration raise
+The client sends it automatically when provider-scoped, so `dataset()`,
+`datasets_by_table()` and `reference_dataset()` work for both roles:
+
+```python
+me = flow.find_reporter("IT")
+me.datasets_by_table()
+```
+
+An unscoped client with a reporter key raises
 [`DiscoveryNotPermittedError`][reportnet.DiscoveryNotPermittedError], a
-subclass of `AuthError`. Operations that accept a dataset identifier directly
-are unaffected.
+subclass of `AuthError`, naming the methods that scope it. Only custodian keys
+can read the dataflow unscoped and see every reporter's datasets.
 
 ## Code lists
 

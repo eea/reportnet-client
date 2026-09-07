@@ -201,7 +201,9 @@ class ReportnetClient:
 
     # ── Dataflow metadata ─────────────────────────────────────────────────────
 
-    def get_dataflow_contents(self, *, dataflow_id: int) -> DataflowContents:
+    def get_dataflow_contents(
+        self, *, dataflow_id: int, provider_id: int | None = None
+    ) -> DataflowContents:
         """GET /dataflow/v1/{dataflowId} — the whole payload, parsed in one pass.
 
         ``get_dataflow``, ``get_reporting_datasets``, ``get_reference_datasets``
@@ -209,13 +211,19 @@ class ReportnetClient:
         individually costs one HTTP round-trip each. Use this when you need more
         than one of them.
 
+        Reporter-scoped keys are refused without ``provider_id`` and permitted
+        with it, receiving only their own reporting datasets. Custodian keys
+        read the whole dataflow without it.
+
         Example::
 
             contents = client.get_dataflow_contents(dataflow_id=1619)
             contents.info.name
             contents.reporting_datasets
         """
-        contents = DataflowContents.from_dict(self._http.get(f"/dataflow/v1/{dataflow_id}").json())
+        params = {"providerId": provider_id} if provider_id is not None else None
+        response = self._http.get(f"/dataflow/v1/{dataflow_id}", params=params)
+        contents = DataflowContents.from_dict(response.json())
         self._big_data_cache[dataflow_id] = contents.info.big_data
         return contents
 

@@ -263,12 +263,23 @@ class Capabilities:
 
     @property
     def can_discover_datasets(self) -> bool:
-        """True if dataset IDs can be looked up by name.
+        """True if dataset identifiers can be looked up by name.
 
-        Discovery reads ``GET /dataflow/v1/{id}``; reporter keys cannot, and
-        must take dataset IDs from the web UI.
+        Both roles can. Custodian keys read the dataflow unscoped; reporter
+        keys must send ``providerId`` and then see only their own reporting
+        datasets, so they need a provider-scoped client
+        (:meth:`~reportnet.DataflowClient.for_provider` or
+        :meth:`~reportnet.DataflowClient.find_reporter`).
         """
-        return self.can_read_dataflow
+        return self.is_usable
+
+    @property
+    def needs_provider_scope(self) -> bool:
+        """True if reads must be scoped to a provider to be permitted.
+
+        Reporter keys are refused an unscoped dataflow read.
+        """
+        return self.role == "reporter"
 
     @property
     def wants_provider_id(self) -> bool:
@@ -282,7 +293,7 @@ class Capabilities:
     def summary(self) -> str:
         if not self.is_usable:
             return f"dataflow {self.dataflow_id}: key not usable"
-        extra = "" if self.can_discover_datasets else "; cannot discover dataset IDs"
+        extra = "; reads must be provider-scoped" if self.needs_provider_scope else ""
         return f"dataflow {self.dataflow_id}: {self.role} key{extra}"
 
 

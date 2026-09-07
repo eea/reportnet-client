@@ -260,7 +260,11 @@ which is why guessing was replaced with a lookup.
 Two confirmed-live API quirks, both encoded in the code with comments:
 
 - **`providerId` depends on the key's ROLE, not the backend, and applies to
-  BOTH `importFileData` and `etlExport`.** Custodian-level keys are 403'd when
+  `importFileData`, `etlExport` AND `GET /dataflow/v1/{id}`.** A reporter key
+  is 403 on the unscoped dataflow read and permitted with `providerId`,
+  receiving its own datasets only; `DataflowClient.get_dataflow_contents()`
+  retries scoped automatically. Reporters therefore *can* discover their
+  dataset ids — do not reinstate the claim that they cannot. Custodian-level keys are 403'd when
   it is *present*; reporter keys when it is *absent* (both verified live on
   2003). No endpoint reports the role, so `_pid_bigdata_safe` infers it from
   whether the key may read `GET /dataflow/v1/{id}`, and both `import_file` and

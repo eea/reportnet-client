@@ -45,8 +45,9 @@ def test_reporter_key_is_detected(mock_router, client):
     _reporter(mock_router)
     caps = client.for_dataflow(2).capabilities()
     assert caps.role == "reporter"
-    assert not caps.can_discover_datasets
-    assert caps.wants_provider_id, "reporter keys must send providerId on BigData"
+    assert caps.wants_provider_id, "reporter keys must send providerId"
+    assert caps.needs_provider_scope, "reporter reads must be provider-scoped"
+    assert caps.can_discover_datasets, "reporters can discover, once scoped"
     assert caps.is_usable
 
 
@@ -77,14 +78,29 @@ def test_custodian_probe_costs_one_request(mock_router, client):
 
 # ── Discovery gives an actionable error, not a bare 403 ───────────────────────
 
-def test_discovery_raises_an_actionable_error_for_reporter_keys(mock_router, client):
+def test_reporter_discovers_datasets_when_provider_scoped(mock_router, client):
+    """Verified live: GET /dataflow/v1/{id}?providerId=N is permitted for a
+    reporter key and returns that provider's own datasets."""
+    mock_router.get("/dataflow/v1/2").mock(
+        side_effect=lambda request, route: (
+            httpx.Response(200, json=DATAFLOW)
+            if "providerId" in request.url.params
+            else httpx.Response(403, text="Forbidden")
+        )
+    )
+    mock_router.get("/representative/v1/dataflow/2").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    ds = client.for_dataflow(2).for_provider(64).dataset("Table1a")
+    assert ds.id == 100
+
+
+def test_unscoped_discovery_error_tells_the_caller_to_scope(mock_router, client):
     _reporter(mock_router)
     with pytest.raises(DiscoveryNotPermittedError) as excinfo:
-        client.for_dataflow(2).for_provider(64).dataset("Table1a")
+        client.for_dataflow(2).get_reference_datasets()
     msg = str(excinfo.value)
-    assert "Reporter" in msg
-    assert "web UI" in msg
-    assert "dataset_id=" in msg
+    assert "find_reporter" in msg or "for_provider" in msg
 
 
 def test_discovery_error_is_still_an_auth_error(mock_router, client):

@@ -123,10 +123,14 @@ This was previously recorded here as "BigData rejects `providerId`". That is
 only half true, and the missing half makes imports impossible for the role most
 likely to be doing them. Both directions are confirmed live on dataflow 2003:
 
-| Key role | `importFileData` **and** `etlExport` |
+| Key role | `importFileData`, `etlExport` **and** `GET /dataflow/v1/{id}` |
 |---|---|
-| Custodian-level | `providerId` **present** → 403 |
+| Custodian-level | `providerId` **present** → 403 (writes/exports) |
 | Reporter | `providerId` **absent** → 403 |
+
+The same parameter governs all three operations. It was missed three times
+because each was investigated separately; `providerId` is the single thing a
+reporter-scoped key needs on every one of them.
 
 Isolated on `etlExport` for a reporter key, v3 and v4 alike:
 
@@ -169,7 +173,9 @@ Measured on dataflow 2003 (BigData) with a Reporter key for IT:
 | `POST /dataset/v2/importFileData/{id}` **with** `providerId` | ✅ |
 | `PUT /orchestrator/jobs/addValidationJob/{id}` + `listGroupValidationsDL` | ✅ |
 | `DELETE /dataset/v1/{id}/deleteTableData/{tableSchemaId}` | ✅ |
-| `GET /dataflow/v1/{id}` | ❌ 403 |
+| `GET /dataflow/v1/{id}` **without** `providerId` | ❌ 403 |
+| `GET /dataflow/v1/{id}?providerId=<own>` | ✅ own reporting datasets + reference datasets |
+| `GET /dataflow/v1/{id}?providerId=<another provider>` | ❌ 403 |
 | `GET /dataset/v{3,4,5}/etlExport/{id}` on its **own reporting dataset**, **with** `providerId` | ✅ |
 | The same export **without** `providerId` | ❌ 403 |
 | Exporting **reference / EU / data-collection / test** datasets | ❌ 403 (role table forbids it) |
@@ -183,9 +189,11 @@ taking only a dataflow or dataset id was probed.
 
 Two consequences worth designing around:
 
-1. **A reporter cannot discover its own dataset IDs.** The only wrapped source
-   is `GET /dataflow/v1/{id}`, which is 403. The representatives endpoint
-   returns `hasDatasets: true` but no IDs. IDs must come from the web UI.
+1. **A reporter discovers its own dataset IDs by sending `providerId`.**
+   The unscoped read is 403; the scoped read returns that provider's reporting
+   datasets and the dataflow's reference datasets, with names and statuses.
+   Another provider's id is refused, so the scoping is enforced rather than
+   advisory.
 2. **A reporter *can* export its own reporting dataset** — provided
    `providerId` is sent. It cannot export reference, EU, data-collection or
    test datasets; the role tables (below) forbid those.
