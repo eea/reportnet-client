@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("reportnet").setLevel(logging.DEBUG)
 ```
 
-## What each level gives you
+## Levels
 
 | Level | Content |
 |---|---|
@@ -18,8 +18,8 @@ logging.getLogger("reportnet").setLevel(logging.DEBUG)
 | `INFO` | Job status transitions with elapsed time, reference-dataset selection, codelist coverage. |
 | `WARNING` | Retries (with reason and delay), failed or timed-out jobs, and **any fallback that weakens the result**. |
 
-That last row is the important one. Anything that makes the library return less
-than you asked for — an unresolved codelist, a reference export that was
+Anything that causes the library to return less
+than requested — an unresolved codelist, a reference export that was
 forbidden — is always at least a warning. See
 [Dataset schema](schema.md#link-and-codelist-fields) for how to turn those into
 errors with `strict=True`.
@@ -56,12 +56,12 @@ Each module logs under its own name, so you can turn parts up or down:
 | `reportnet.dataflow` | orchestration: templates, codelists, imports |
 
 ```python
-# Quiet the per-request noise, keep job progress
+# Suppress per-request records, retain job progress
 logging.getLogger("reportnet").setLevel(logging.DEBUG)
 logging.getLogger("reportnet._http").setLevel(logging.WARNING)
 ```
 
-## API keys are never logged
+## API keys
 
 The key is sent as a header and no log record includes headers. A unit test
 asserts this.

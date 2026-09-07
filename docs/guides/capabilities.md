@@ -1,74 +1,75 @@
-# What your key can do
+# Permissions
 
-Reportnet grants permissions per **key role**, and there is no endpoint that
-reports which role a key has. The library probes for it — two cheap requests,
-cached for the client's lifetime.
+Reportnet assigns permissions per API key role. No endpoint reports the role
+directly, so the library determines it by probing. The result is cached for the
+lifetime of the client.
 
 ```python
 caps = flow.capabilities()
 print(caps.summary())
-# "dataflow 2003: reporter key; cannot discover dataset IDs"
+# "dataflow 1234: reporter key; cannot discover dataset IDs"
 ```
 
 ::: reportnet.Capabilities
 
-## Why this matters
+## Effect on request construction
 
-The role doesn't only change *what succeeds* — it changes how requests must be
-**built**. Verified live on dataflow 2003:
+The role determines how requests are built, not only which succeed. Both
+directions are confirmed against a BigData dataflow:
 
-| Key role | `importFileData` on BigData |
+| Key role | `importFileData` and `etlExport` |
 |---|---|
-| Custodian | `providerId` **present** → 403 |
-| Reporter | `providerId` **absent** → 403 |
+| Custodian | `providerId` present: HTTP 403 |
+| Reporter | `providerId` absent: HTTP 403 |
 
-The library handles this for you: it infers the role, and `import_file()`
-retries once with the opposite choice if the inference was wrong. You should
-never need to pass `provider_id` yourself.
+The library selects the correct value and retries once with the alternative if
+the request is refused. `provider_id` does not need to be passed explicitly.
 
-## What each role can do
+## Operations by role
 
-Measured on a BigData dataflow:
-
-| | Reporter | Custodian |
+| Operation | Reporter | Custodian |
 |---|---|---|
-| Read dataset schemas | ✅ | ✅ |
-| Import data | ✅ | ✅ |
-| Validate, read results | ✅ | ✅ |
-| Check import status | ✅ | ✅ |
-| Delete own table data | ✅ | ✅ |
-| List dataset IDs | ❌ | ✅ |
-| Confirm an import landed (`verify_import`) | ✅ | ✅ |
-| Detect backend (`is_big_dataflow`) | ✅ | ✅ |
-| Export your own reporting dataset | ✅ | ✅ |
-| Export reference / EU / data-collection datasets | ❌ | ✅ |
-| Resolve codelists | ❌ | ✅ |
-| Release history | ❌ | ✅ |
+| Read dataset schemas | yes | yes |
+| Upload data | yes | yes |
+| Verify an upload | yes | yes |
+| Validate and read results | yes | yes |
+| Resolve country code to provider | yes | yes |
+| Export own reporting dataset | yes | yes |
+| List dataset identifiers | no | yes |
+| Export reference, EU and data-collection datasets | no | yes |
+| Resolve code lists | no | yes |
+| Read release history | no | yes |
 
-## Two consequences for Reporters
+Permissions are defined per endpoint and dataset type. The tables published in
+the API's own operation descriptions are reproduced in
+[API notes](../api-notes.md).
 
-**You cannot list your dataset IDs.** Only `GET /dataflow/v1/{id}` lists them,
-and reporter keys are forbidden from it. Take the ID from the web UI — it's in
-the URL when you open the dataset. Anything needing only a dataset ID
-(`get_schema`, `import_file`, `validate`) works normally.
+## Dataset identifiers
 
-Calls that need discovery raise
-[`DiscoveryNotPermittedError`][reportnet.DiscoveryNotPermittedError] — a
-subclass of `AuthError` carrying an actionable message rather than a bare 403.
+Enumerating datasets requires administrator permissions. Reporter keys must
+take dataset identifiers from the dataset URL in the web interface.
 
-**You can read your own data back, but not the shared reference datasets.**
-Exporting your reporting dataset works; the code lists it links to do not.
-That is why code-list columns come back as plain strings.
+Calls that require enumeration raise
+[`DiscoveryNotPermittedError`][reportnet.DiscoveryNotPermittedError], a
+subclass of `AuthError`. Operations that accept a dataset identifier directly
+are unaffected.
 
-For a quick check after an upload, prefer
-[`verify_import()`][reportnet.DataflowClient.verify_import] over a full export
-— it is one request rather than a multi-minute job:
+## Code lists
+
+Resolving code lists requires exporting the shared reference dataset, which
+reporter keys cannot do. Columns constrained to a code list are therefore typed
+as strings rather than enumerations, and `get_template()` issues a warning.
+Values are still checked during validation.
+
+## Verifying an upload
+
+A `FINISHED` job does not confirm that rows were stored. Import statistics are
+readable by both roles:
 
 ```python
-it.verify_import(dataset_id=108953)["Reporter"]
+me.verify_import(dataset_id=DATASET_ID)["Contacts"]
 # {'records': 1, 'last_import': datetime(...), 'file_extension': 'csv'}
 ```
 
-This matters because [a FINISHED job is not evidence data
-landed](../api-notes.md). Inspecting the rows themselves still has to happen in
-the web UI.
+This is one request. A full export returns the stored rows but runs
+asynchronously and takes longer.

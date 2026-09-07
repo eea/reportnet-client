@@ -43,7 +43,7 @@ nav:
   - Home: index.md
   - Concepts: concepts.md
   - Reporter guide:
-    - What your key can do: guides/capabilities.md
+    - Permissions: guides/capabilities.md
     - Dataset schema: guides/schema.md
     - Import data: guides/import.md
     - Validate a dataset: guides/validation.md
