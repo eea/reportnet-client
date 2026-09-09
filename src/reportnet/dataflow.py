@@ -85,6 +85,7 @@ class DataflowClient:
         self._dataflow_id = dataflow_id
         self._provider_id = provider_id
         self._country_code = country_code
+        self._dataset_owner: dict[int, int | None] = {}
 
     def _pid(self, override: int | None) -> int | None:
         """Return override if given, else fall back to the stored provider_id."""
@@ -453,8 +454,42 @@ class DataflowClient:
             )
 
         return self._send_with_provider_id(
-            _send, override=provider_id, what=f"import into dataset {dataset_id}"
+            _send,
+            override=provider_id,
+            what=f"import into dataset {dataset_id}",
+            dataset_id=dataset_id,
         )
+
+    def _provider_for_dataset(self, dataset_id: int) -> int | None:
+        """Return the provider that owns *dataset_id*, or None if not knowable.
+
+        Used to give :meth:`_send_with_provider_id` something to flip *to* on an
+        unscoped client. A reporting dataset belongs to exactly one reporter, so
+        its ``providerId`` is a property of the dataset rather than of the
+        client — which means it can be recovered even when the caller never
+        scoped to a provider.
+
+        Returns None when the dataflow cannot be read (a reporter key that is
+        not provider-scoped) or when *dataset_id* is not a reporting dataset
+        (reference, test and data-collection datasets have no owner). Both are
+        ordinary outcomes, not errors: the caller falls back to raising the
+        original 403.
+        """
+        if dataset_id in self._dataset_owner:
+            return self._dataset_owner[dataset_id]
+        owner: int | None = None
+        try:
+            for ds in self.get_dataflow_contents().reporting_datasets:
+                if ds.id == dataset_id:
+                    owner = ds.provider_id
+                    break
+        except AuthError:  # DiscoveryNotPermittedError is a subclass
+            logger.debug(
+                "cannot read dataflow %s to find the owner of dataset %s",
+                self._dataflow_id, dataset_id,
+            )
+        self._dataset_owner[dataset_id] = owner
+        return owner
 
     def _send_with_provider_id(
         self,
@@ -462,6 +497,7 @@ class DataflowClient:
         *,
         override: int | None,
         what: str,
+        dataset_id: int | None = None,
     ) -> JobHandle:
         """Call *send* with the right ``providerId``, flipping once on a 403.
 
@@ -471,6 +507,14 @@ class DataflowClient:
         opposite is tried. That is safe because a 403 means the request was
         rejected outright, so nothing happened and no duplicate can result.
 
+        The inference is a proxy (can this key read the dataflow unscoped?) and
+        it is wrong for one real case: an account that is *both* custodian and
+        lead reporter passes the custodian probe, so ``providerId`` is withheld
+        and every write is refused. The flip exists to correct exactly that, but
+        it needs a provider to flip to. When the client was never scoped to one,
+        *dataset_id* lets it recover the owner from the dataset itself, so the
+        correction works on an unscoped client too.
+
         An explicit *override* is honoured and never second-guessed.
         """
         pid = self._pid_bigdata_safe(override)
@@ -478,9 +522,13 @@ class DataflowClient:
             return send(pid)
         except AuthError:
             # Only the auto-filled case is ambiguous enough to retry.
-            if override is not None or self._provider_id is None:
+            if override is not None:
                 raise
-            alternative = None if pid is not None else self._provider_id
+            alternative = self._provider_id
+            if alternative is None and dataset_id is not None:
+                alternative = self._provider_for_dataset(dataset_id)
+            if pid is not None:
+                alternative = None
             if alternative == pid:
                 raise
             logger.warning(
@@ -686,7 +734,10 @@ class DataflowClient:
             )
 
         return self._send_with_provider_id(
-            _send, override=provider_id, what=f"export of dataset {dataset_id}"
+            _send,
+            override=provider_id,
+            what=f"export of dataset {dataset_id}",
+            dataset_id=dataset_id,
         )
 
     def export_frames(

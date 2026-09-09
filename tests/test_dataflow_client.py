@@ -202,3 +202,79 @@ def test_set_reference_dataset_updatable(mock_router, df_client):
     )
     df_client.set_reference_dataset_updatable(dataset_id=10, updatable=True)
     assert "dataflowId=5" in str(route.calls[0].request.url)
+
+
+# ── Dual-role keys: custodian probe, reporter write ───────────────────────────
+
+
+def test_import_flips_to_dataset_owner_on_unscoped_client(mock_router, client):
+    """An account that is *both* custodian and lead reporter passes the
+    custodian probe, so providerId is withheld and the write 403s. Verified
+    live on dataflow 2003. The flip must recover the provider from the dataset
+    itself, because an unscoped client has none stored to flip to."""
+    dc = client.for_dataflow(dataflow_id=5)  # no provider_id
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": 5,
+                "bigData": True,
+                "reportingDatasets": [
+                    {"id": 10, "dataProviderId": 56, "dataSetName": "France"},
+                    {"id": 11, "dataProviderId": 64, "dataSetName": "Italy"},
+                ],
+            },
+        )
+    )
+    route = mock_router.post("/dataset/v2/importFileData/10").mock(
+        side_effect=[
+            httpx.Response(403, text="Forbidden"),
+            httpx.Response(200, json=JOB_RESPONSE),
+        ]
+    )
+    dc.import_file(dataset_id=10, file=b"data")
+    assert len(route.calls) == 2
+    assert "providerId" not in str(route.calls[0].request.url)
+    assert route.calls[1].request.url.params["providerId"] == "56"
+
+
+def test_import_flip_picks_the_owning_provider_not_just_any(mock_router, client):
+    """The recovered provider must be the one owning *this* dataset — Italy's
+    dataset must not be retried as France."""
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": 5,
+                "bigData": True,
+                "reportingDatasets": [
+                    {"id": 10, "dataProviderId": 56, "dataSetName": "France"},
+                    {"id": 11, "dataProviderId": 64, "dataSetName": "Italy"},
+                ],
+            },
+        )
+    )
+    route = mock_router.post("/dataset/v2/importFileData/11").mock(
+        side_effect=[
+            httpx.Response(403, text="Forbidden"),
+            httpx.Response(200, json=JOB_RESPONSE),
+        ]
+    )
+    dc.import_file(dataset_id=11, file=b"data")
+    assert route.calls[1].request.url.params["providerId"] == "64"
+
+
+def test_import_still_raises_when_owner_is_unknowable(mock_router, client):
+    """A reference dataset has no owning provider, so there is nothing to flip
+    to and the original 403 must surface rather than being retried blindly."""
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True, "reportingDatasets": []})
+    )
+    route = mock_router.post("/dataset/v2/importFileData/99").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
+    with pytest.raises(Exception):
+        dc.import_file(dataset_id=99, file=b"data")
+    assert len(route.calls) == 1, "must not retry when there is no alternative"
