@@ -15,18 +15,22 @@ can never disagree about how to talk to the API.
 from __future__ import annotations
 
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, Literal, Union
+from typing import IO, TYPE_CHECKING, Any, Callable, Literal, Union
 
 from ._http import HttpSession
 from ._log import get_logger
 from ._util import to_file_tuple
-from .jobs import JobHandle
+from .exceptions import APIError
+from .jobs import JobHandle, JobStatus
 from .models import (
     Capabilities,
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
+    ExportResult,
+    OperationEvidence,
     ReferenceDataset,
     Reporter,
     ReportingDataset,
@@ -64,6 +68,7 @@ class ReportnetClient:
         self._big_data_cache: dict[int, bool] = {}
         # A key's role never changes, so this is safe for the client's lifetime.
         self._capabilities_cache: dict[int, Capabilities] = {}
+        self._evidence: dict[tuple[object, ...], OperationEvidence] = {}
 
     @classmethod
     def from_keyring(
@@ -158,7 +163,7 @@ class ReportnetClient:
         except AuthError:
             return False
 
-    def capabilities(self, *, dataflow_id: int) -> Capabilities:
+    def capabilities(self, *, dataflow_id: int, refresh: bool = False) -> Capabilities:
         """Probe what this API key is allowed to do on *dataflow_id*.
 
         Reportnet has no endpoint reporting a key's role, and the role changes
@@ -169,8 +174,11 @@ class ReportnetClient:
         Example::
 
             caps = client.capabilities(dataflow_id=2003)
-            print(caps.summary())      # "dataflow 2003: reporter key; cannot discover dataset IDs"
+            print(caps.summary())
+            # "dataflow 2003: reporter key; reads must be provider-scoped"
         """
+        if refresh:
+            self._capabilities_cache.pop(dataflow_id, None)
         cached = self._capabilities_cache.get(dataflow_id)
         if cached is not None:
             return cached
@@ -222,7 +230,17 @@ class ReportnetClient:
             contents.reporting_datasets
         """
         params = {"providerId": provider_id} if provider_id is not None else None
-        response = self._http.get(f"/dataflow/v1/{dataflow_id}", params=params)
+        try:
+            response = self._http.get(f"/dataflow/v1/{dataflow_id}", params=params)
+        except Exception as exc:
+            self._record_evidence("discovery", dataflow_id=dataflow_id,
+                                  provider_id=provider_id,
+                                  request_accepted=False if isinstance(exc, APIError) else None,
+                                  detail=f"Request failed: {type(exc).__name__}")
+            raise
+        self._record_evidence("discovery", dataflow_id=dataflow_id,
+                              provider_id=provider_id, request_accepted=True,
+                              detail="HTTP accepted; provider ownership not independently checked")
         contents = DataflowContents.from_dict(response.json())
         self._big_data_cache[dataflow_id] = contents.info.big_data
         return contents
@@ -410,8 +428,8 @@ class ReportnetClient:
         """GET /dataset/v{version}/etlExport/{datasetId} — async export.
 
         v4 (BigData/DLT2): result is a ZIP of CSVs.
-        v5 (analytics, opt-in): result is a ZIP of Parquet files — same shape
-        as v4, smaller and faster to load; never selected automatically, pass
+        v5 (analytics, opt-in): result is a ZIP of partitioned Parquet files.
+        Size and speed depend on the data; never selected automatically, pass
         ``version=5`` explicitly.
         v3 (Citus): result is JSON; requires ``data_provider_codes`` (ISO country code).
 
@@ -434,8 +452,75 @@ class ReportnetClient:
         if table_schema_id is not None:
             params["tableSchemaId"] = table_schema_id
 
-        response = self._http.get(f"/dataset/v{version}/etlExport/{dataset_id}", params=params)
-        return _make_job(response.json(), self._http, is_export=True, provider_id=provider_id)
+        evidence: dict[str, Any] = dict(dataflow_id=dataflow_id, dataset_id=dataset_id,
+                        provider_id=provider_id, version=version,
+                        table_schema_id=table_schema_id, data_provider_codes=data_provider_codes)
+        try:
+            response = self._http.get(f"/dataset/v{version}/etlExport/{dataset_id}", params=params)
+        except Exception as exc:
+            self._record_evidence("etl_export", **evidence,
+                                  request_accepted=False if isinstance(exc, APIError) else None,
+                                  detail=f"Request failed: {type(exc).__name__}")
+            raise
+        self._record_evidence("etl_export", **evidence, request_accepted=True,
+                              detail="Export request accepted; payload not checked")
+        handle = _make_job(response.json(), self._http, is_export=True, provider_id=provider_id)
+        handle._on_verification = lambda report: self._record_evidence(
+            "etl_export", **evidence, request_accepted=True,
+            payload_verified=report.ok, detail=report.summary(),
+        )
+        return handle
+
+    def export_frames(
+        self, *, dataset_id: int, dataflow_id: int,
+        provider_id: int | None = None, data_provider_codes: str | None = None,
+        table_schema_id: str | None = None, version: int | None = None,
+        strict: bool = True, poll_interval: float = 5.0, timeout: float | None = None,
+        on_status: Callable[[JobStatus], None] | None = None,
+    ) -> ExportResult:
+        """Export and check table/column coverage against a fresh dataset schema.
+
+        Raises ExportVerificationError by default. With strict=False, mismatches
+        warn AND log, and the returned result retains every frame plus the report.
+        Empty tables are reported; structural success does not prove useful data.
+        Raw etl_export().result()/to_frames() remain unchecked alternatives.
+        """
+        schema = self.get_schema(dataset_id=dataset_id)
+        if table_schema_id is not None and not any(t.id == table_schema_id for t in schema.tables):
+            raise ValueError(f"Table schema {table_schema_id!r} is not in dataset {dataset_id}")
+        handle = self.etl_export(
+            dataset_id=dataset_id, dataflow_id=dataflow_id, provider_id=provider_id,
+            data_provider_codes=data_provider_codes, table_schema_id=table_schema_id,
+            version=version,
+        )
+        return handle.to_verified_frames(
+            schema=schema, dataset_id=dataset_id, table_schema_id=table_schema_id,
+            strict=strict, poll_interval=poll_interval, timeout=timeout, on_status=on_status,
+        )
+
+    def permission_evidence(self, *, dataflow_id: int) -> tuple[OperationEvidence, ...]:
+        """Return observations for this client/key, without probing or starting jobs.
+
+        Absent operations are unknown. Entries do not carry over to other keys,
+        datasets, versions, filters or provider scopes. This is latest evidence,
+        not a complete audit log or a promise that the next request will work.
+        """
+        return tuple(e for e in self._evidence.values() if e.dataflow_id == dataflow_id)
+
+    def _record_evidence(
+        self, operation: str, *, dataflow_id: int, dataset_id: int | None = None,
+        provider_id: int | None = None, version: int | None = None,
+        table_schema_id: str | None = None, data_provider_codes: str | None = None,
+        request_accepted: bool | None = None, payload_verified: bool | None = None,
+        workflow_verified: bool | None = None, detail: str = "",
+    ) -> None:
+        key = (operation, dataflow_id, dataset_id, provider_id, version,
+               table_schema_id, data_provider_codes)
+        self._evidence[key] = OperationEvidence(
+            operation, dataflow_id, dataset_id, provider_id, version, table_schema_id,
+            datetime.now(timezone.utc).isoformat(), request_accepted, payload_verified,
+            workflow_verified, detail, data_provider_codes,
+        )
 
     def export_file(
         self,

@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import io
+import warnings
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, TypeAlias, Union
+
+from ._log import get_logger
 
 if TYPE_CHECKING:
     import pandas  # type: ignore[import-untyped]
     import polars
 
     NativeFrame: TypeAlias = Union[polars.DataFrame, pandas.DataFrame]
+
+logger = get_logger(__name__)
 
 
 def to_file_tuple(
@@ -77,7 +82,7 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
     Handles three formats:
 
     - **ZIP of CSVs** (v4 / BigData exports): one ``.csv`` file per table.
-    - **ZIP of Parquet** (v5 exports): one ``.parquet`` file per table.
+    - **ZIP of Parquet** (v5 exports): flat files or nested table partitions.
     - **ZIP of JSON** (v3 / Citus exports): a single ``.json`` file containing
       all tables in the Reportnet ETL JSON envelope.
 
@@ -100,6 +105,9 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
         def _read_parquet(data: bytes) -> Any:
             return pl.read_parquet(io.BytesIO(data))
 
+        def _concat_frames(frames: list[Any]) -> Any:
+            return pl.concat(frames)
+
         def _records_to_frame(rows: list[dict[str, Any]]) -> Any:
             return pl.DataFrame(rows)
 
@@ -114,6 +122,9 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
 
             def _read_parquet(data: bytes) -> Any:
                 return pd.read_parquet(io.BytesIO(data))
+
+            def _concat_frames(frames: list[Any]) -> Any:
+                return pd.concat(frames, ignore_index=True)
 
             def _records_to_frame(rows: list[dict[str, Any]]) -> Any:
                 return pd.DataFrame(rows)
@@ -134,7 +145,14 @@ def zip_to_frames(zip_bytes: bytes) -> dict[str, Any]:
             return {_table_name(n): _read_csv(zf.read(n)) for n in csv_names}
 
         if parquet_names:
-            return {_table_name(n): _read_parquet(zf.read(n)) for n in parquet_names}
+            tables: dict[str, list[Any]] = {}
+            for name in parquet_names:
+                table = _parquet_table_name(name)
+                tables.setdefault(table, []).append(_read_parquet(zf.read(name)))
+            return {
+                table: parts[0] if len(parts) == 1 else _concat_frames(parts)
+                for table, parts in tables.items()
+            }
 
         if json_names:
             return _etl_json_to_frames(zf.read(json_names[0]), _records_to_frame)
@@ -146,6 +164,27 @@ def _table_name(path: str) -> str:
     """'some/path/TableName.csv' → 'TableName' (works for any extension)."""
     leaf = path.rsplit("/", 1)[-1]
     return leaf.rsplit(".", 1)[0] if "." in leaf else leaf
+
+
+def _parquet_table_name(path: str) -> str:
+    """Recognise RN3's Table/Table_<UUID>/partition.parquet layout.
+
+    Partition filenames repeat across tables. Using the leaf name silently
+    overwrites tables; all partitions belonging to a table must be combined.
+    Keep supporting flat exports and archives with an outer directory.
+    """
+    from uuid import UUID
+
+    parts = path.split("/")
+    for table, directory in zip(parts[:-2], parts[1:-1]):
+        prefix = table + "_"
+        if directory.startswith(prefix):
+            try:
+                UUID(directory[len(prefix):])
+            except ValueError:
+                continue
+            return table
+    return _table_name(path)
 
 
 def _etl_json_to_frames(
@@ -439,28 +478,65 @@ def build_codelists(
     )
 
 
+def _srid_mismatch(values: list[Any], crs: str) -> str | None:
+    """Return a warning message if the EWKB carries a different SRID than *crs*.
+
+    RN3 v5 exports are EWKB and carry their own SRID — 4258, not 4326, on
+    dataflow 2003. ``GeoSeries.from_wkb`` discards it and stamps whatever *crs*
+    says, which mislabels every coordinate with no indication. The SRID is
+    sitting in the bytes, so read it rather than degrading silently.
+    """
+    try:
+        import shapely  # type: ignore[import-untyped]
+
+        srids = {int(shapely.get_srid(g)) for g in shapely.from_wkb(values) if g is not None}
+    except Exception:  # unreadable geometry is the caller's problem, not ours
+        return None
+    srids.discard(0)  # 0 means "no SRID recorded", which is not a mismatch
+    if not srids:
+        return None
+    try:
+        from pyproj import CRS
+
+        requested = CRS.from_user_input(crs).to_epsg()
+    except Exception:
+        requested = None
+    if requested is not None and srids == {requested}:
+        return None
+    embedded = ", ".join(f"EPSG:{s}" for s in sorted(srids))
+    return (
+        f"geometry is encoded as {embedded} but to_geodataframe() was asked to assign "
+        f"{crs}; coordinates are not reprojected, so the result would be mislabelled. "
+        f"Pass crs=\"{embedded}\" to record the true CRS."
+    )
+
+
 def to_geodataframe(
     frame: object,
     geometry_col: str,
     *,
     crs: str = "EPSG:4326",
 ) -> Any:
-    """Convert a DataFrame with a WKT geometry column to a ``geopandas.GeoDataFrame``.
+    """Convert WKT, GeoJSON or WKB geometry to a ``geopandas.GeoDataFrame``.
 
     Geometry fields (``POINT``, ``POLYGON``, ``MULTIPOLYGON``, etc.) are stored
-    as WKT strings in Reportnet CSV exports.  This helper parses them into
+    as WKT/GeoJSON strings in CSV or WKB bytes in Parquet. This helper parses them into
     proper shapely geometry objects and returns a ``GeoDataFrame`` ready for
     spatial analysis or visualisation.
 
     Requires ``pip install reportnet-client[spatial]``.
 
     Args:
-        frame: A polars or pandas DataFrame containing a WKT geometry column,
+        frame: A polars or pandas DataFrame containing a geometry column,
             typically from :meth:`~reportnet.JobHandle.to_frames`.
-        geometry_col: Name of the column holding WKT geometry strings
+        geometry_col: Name of the column holding encoded geometries
             (e.g. ``"geometry_polygon"`` or ``"geometry_line"``).
-        crs: Coordinate reference system for the output GeoDataFrame.
-            Reportnet geometries are in WGS 84 (``"EPSG:4326"``).
+        crs: Coordinate reference system to assign, not a reprojection.
+            Defaults to WGS 84 for compatibility; pass the dataset's actual
+            CRS (e.g. ``"EPSG:4258"`` for dataflow 2003's spatial data).
+            WKB/EWKB input carries its own SRID: when it disagrees with *crs*
+            a warning is issued and logged naming the encoded CRS, because
+            assigning the wrong one mislabels every coordinate silently.
 
     Returns:
         A ``geopandas.GeoDataFrame`` with the named column replaced by a
@@ -491,10 +567,28 @@ def to_geodataframe(
     except Exception:
         pdf = frame
 
-    # Detect geometry format: GeoJSON Feature strings start with '{', WKT does not.
+    # v5 exports use WKB, including zero-length bytes for missing geometries.
+    # Classify the encoding in a single pass — the column can be large, and the
+    # old code scanned it twice on every non-WKB call.
     col = pdf[geometry_col]
-    first_valid = next((v for v in col if v and isinstance(v, str)), None)
-    if first_valid and first_valid.lstrip().startswith("{"):
+    has_bytes = False
+    first_valid: Any = None
+    for value in col:
+        if isinstance(value, bytes):
+            has_bytes = True
+            if value:
+                first_valid = value
+                break
+        elif first_valid is None and isinstance(value, str) and value:
+            first_valid = value
+    if has_bytes:
+        wkb_values = [v if v else None for v in col]
+        mismatch = _srid_mismatch(wkb_values, crs)
+        if mismatch is not None:
+            logger.warning(mismatch)
+            warnings.warn(mismatch, UserWarning, stacklevel=2)
+        geom_series = gpd.GeoSeries.from_wkb(wkb_values, index=col.index, crs=crs)
+    elif first_valid and first_valid.lstrip().startswith("{"):
         import json as _json
 
         from shapely.geometry import shape as _shape  # type: ignore[import-untyped]

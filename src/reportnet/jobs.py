@@ -12,13 +12,17 @@ session and performs network I/O — which is why it lives here rather than in
 from __future__ import annotations
 
 import time
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from ._http import HttpSession
 from ._log import get_logger
 from .exceptions import JobFailedError, JobTimeoutError
+
+if TYPE_CHECKING:
+    from .models import DatasetSchema, ExportResult, ExportVerification
 
 logger = get_logger(__name__)
 
@@ -50,6 +54,7 @@ class JobHandle:
     _download_url: str | None = field(default=None, repr=False)
     # Reporters must include providerId when polling; stored here so _poll() can inject it.
     _provider_id: int | None = field(default=None, repr=False)
+    _on_verification: Callable[[ExportVerification], None] | None = field(default=None, repr=False)
 
     def _poll(self) -> dict[str, object]:
         url = self.polling_url
@@ -135,3 +140,30 @@ class JobHandle:
         return zip_to_frames(
             self.result(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
         )
+
+
+    def to_verified_frames(
+        self, *, schema: DatasetSchema, dataset_id: int, table_schema_id: str | None = None,
+        strict: bool = True, poll_interval: float = 5.0, timeout: float | None = None,
+        on_status: Callable[[JobStatus], None] | None = None,
+    ) -> ExportResult:
+        """Download once and verify against an explicit schema snapshot.
+
+        Prefer client.export_frames() to obtain the schema automatically.
+        Raw result()/to_frames() do not perform schema verification.
+        """
+        from .exceptions import ExportVerificationError
+        from .models import ExportResult
+        from .verification import verify_export
+
+        frames = self.to_frames(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
+        report = verify_export(frames, schema, dataset_id=dataset_id,
+                               table_schema_id=table_schema_id)
+        if self._on_verification is not None:
+            self._on_verification(report)
+        if not report.ok:
+            logger.warning(report.summary())
+            if strict:
+                raise ExportVerificationError(report)
+            warnings.warn(report.summary(), UserWarning, stacklevel=2)
+        return ExportResult(frames, report)

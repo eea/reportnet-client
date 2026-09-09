@@ -37,8 +37,9 @@ the request is refused. `provider_id` does not need to be passed explicitly.
 | Export own reporting dataset | yes | yes |
 | List own dataset identifiers | yes | yes |
 | List all reporters' datasets | no | yes |
-| Export reference, EU and data-collection datasets | no | yes |
-| Resolve code lists | no | yes |
+| Request reference export 108961 on flow 2003 | accepted; empty v4 and mismatched v5 contents | v5 accepted; contents need verification |
+| Export EU and data-collection datasets | previously refused; not retested in September audit | role table permits; not retested |
+| Resolve code lists | depends on reference access and coverage | depends on reference access and coverage |
 | Read release history | no | yes |
 
 Permissions are defined per endpoint and dataset type. The tables published in
@@ -66,10 +67,40 @@ can read the dataflow unscoped and see every reporter's datasets.
 
 ## Code lists
 
-Resolving code lists requires exporting the shared reference dataset, which
-reporter keys cannot do. Columns constrained to a code list are therefore typed
-as strings rather than enumerations, and `get_template()` issues a warning.
-Values are still checked during validation.
+Resolving code lists requires exporting the shared reference dataset. The Italy
+reporter successfully exported reference 108961 with provider scope in the
+[September audit](../live-tests-2003.md); do not reject this operation solely
+because the key is reporter-scoped. However, v4 returned empty tables and v5 returned
+extra tables outside the schema; neither resolved its ten linked fields.
+Access and usable contents may differ for other references.
+If export or resolution fails, `get_template()` warns; `strict=True` raises
+instead of returning unconstrained LINK columns.
+
+## What this key has actually been observed to do
+
+`capabilities()` *infers* how to scope requests. `permission_evidence()` reports
+what this client has actually observed, with no probing and no new requests:
+
+```python
+for observation in flow.permission_evidence():
+    print(observation.operation, observation.request_accepted,
+          observation.payload_verified, observation.detail)
+```
+
+Each `OperationEvidence` keeps three facts apart, and `None` always means
+"not checked" — never "permitted":
+
+| Field | Answers |
+|---|---|
+| `request_accepted` | Did the API accept the request? |
+| `payload_verified` | Did the returned payload match the schema? |
+| `workflow_verified` | Did an upload survive a full readback comparison? |
+
+An accepted request is not a verified payload — the dataflow 2003 audit found a
+v5 reference export that returned HTTP 200 and 40 tables that were not in the
+requested schema. Entries are per exact request scope (key, dataset, version,
+provider, filters) and are the latest observation, not an audit log or a
+promise about the next call.
 
 ## Verifying an upload
 

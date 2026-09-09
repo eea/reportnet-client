@@ -26,9 +26,12 @@ from .models import (
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
+    ExportResult,
+    OperationEvidence,
     ReferenceDataset,
     Reporter,
     ReportingDataset,
+    SubmissionResult,
     TestDataset,
     ValidationResult,
 )
@@ -65,7 +68,7 @@ class DataflowClient:
         ie.add_validation_job(dataset_id=93953)
         frames = ie.etl_export(dataset_id=93953).to_frames()
 
-        # Reference datasets (custodian only, no provider_id)
+        # Reference dataset metadata (reporters need provider scope)
         df.import_file(dataset_id=REF_DS_ID, file="codelists.csv")
         df.set_reference_dataset_updatable(dataset_id=REF_DS_ID, updatable=False)
     """
@@ -228,10 +231,14 @@ class DataflowClient:
                     scoped_exc.status_code, self._discovery_hint()
                 ) from scoped_exc
 
-    def capabilities(self) -> Capabilities:
+    def capabilities(self, *, refresh: bool = False) -> Capabilities:
         """Return what this API key may do on this dataflow. See
         :meth:`ReportnetClient.capabilities <reportnet.ReportnetClient.capabilities>`."""
-        return self._client.capabilities(dataflow_id=self._dataflow_id)
+        return self._client.capabilities(dataflow_id=self._dataflow_id, refresh=refresh)
+
+    def permission_evidence(self) -> tuple[OperationEvidence, ...]:
+        """Observed outcomes for this key/dataflow; absent operations are unknown."""
+        return self._client.permission_evidence(dataflow_id=self._dataflow_id)
 
     def _discovery_hint(self) -> str:
         """Explain a discovery 403 in terms the caller can act on."""
@@ -491,8 +498,8 @@ class DataflowClient:
         ``getImportRelatedStatistics`` and joins it to the dataset schema, so
         you get table names instead of schema IDs.
 
-        Works with reporter-scoped keys, which cannot export and therefore have
-        no other way to confirm an import.
+        Works with reporter-scoped keys. These are last-import statistics, not
+        current row counts; export the dataset to inspect its current contents.
 
         Returns:
             ``{table_name: {"records": int | None, "last_import": datetime | None,
@@ -627,7 +634,7 @@ class DataflowClient:
           requires a country code (``dataProviderCodes``), injected automatically
           when the client was created via :meth:`find_reporter`.
         - ``5`` (analytics, opt-in) — asynchronous, returns a ZIP of Parquet files;
-          same shape as v4 but smaller/faster to load. Must be requested
+          partitioned files; size and speed depend on the data. Must be requested
           explicitly with ``version=5``; never chosen automatically.
 
         When *version* is ``None`` (the default), the correct version is chosen
@@ -640,14 +647,9 @@ class DataflowClient:
                 ``dataProviderCodes`` to the v3 endpoint (e.g. ``"FR"``).
                 Inferred automatically when the client was obtained via
                 :meth:`find_reporter`.
-            provider_id: Unlike other methods on this class, this is **not**
-                auto-filled from the ``provider_id`` this client was scoped
-                with (e.g. via :meth:`for_provider` / :meth:`find_reporter`).
-                For v4/v5 (BigData), ``dataset_id`` already identifies a
-                single provider's dataset, and sending ``providerId`` — even
-                the correct one — gets a 403 from the API for reporter-level
-                keys. Only pass this if you have confirmed your key/dataflow
-                combination needs it.
+            provider_id: Overrides the stored provider scope. Reporters normally
+                need it; custodian-level keys normally omit it. The inferred
+                role guides construction, with one retry on authorization failure.
         """
         # Resolving the version here as well as downstairs looks redundant, but
         # the two scoping decisions below both depend on knowing it. The lookup
@@ -667,13 +669,8 @@ class DataflowClient:
                     "dataflow is Citus (v3).",
                     self._dataflow_id, version,
                 )
-        # v3 (Citus) uses dataProviderCodes (country code) instead of providerId.
-        # v4/v5 (BigData) reject providerId outright (403) for reporter-level
-        # keys, so — unlike other methods — it is never auto-filled from the
-        # stored provider_id here; only an explicit override is forwarded.
-        # v3 also accepts dataProviderCodes as a *filter*, but it does not
-        # authorise the call on its own — verified live: dataProviderCodes
-        # alone is 403, providerId alone succeeds.
+        # Country codes filter v3 data; provider scope is an authorization
+        # decision handled consistently by _send_with_provider_id.
         dpc = data_provider_codes or (self._country_code if version == 3 else None)
         resolved_version = version
 
@@ -690,6 +687,80 @@ class DataflowClient:
 
         return self._send_with_provider_id(
             _send, override=provider_id, what=f"export of dataset {dataset_id}"
+        )
+
+    def export_frames(
+        self, *, dataset_id: int, provider_id: int | None = None,
+        data_provider_codes: str | None = None, table_schema_id: str | None = None,
+        version: int | None = None, strict: bool = True,
+        poll_interval: float = 5.0, timeout: float | None = None,
+        on_status: Callable[[JobStatus], None] | None = None,
+    ) -> ExportResult:
+        """Download frames with schema verification (strict by default).
+
+        Empty tables are reported, not considered proof of useful contents.
+        Provider inference/retry is identical to etl_export().
+        """
+        schema = self.get_schema(dataset_id=dataset_id)
+        if table_schema_id is not None and not any(t.id == table_schema_id for t in schema.tables):
+            raise ValueError(f"Table schema {table_schema_id!r} is not in dataset {dataset_id}")
+        handle = self.etl_export(
+            dataset_id=dataset_id, provider_id=provider_id, data_provider_codes=data_provider_codes,
+            table_schema_id=table_schema_id, version=version,
+        )
+        return handle.to_verified_frames(
+            schema=schema, dataset_id=dataset_id, table_schema_id=table_schema_id,
+            strict=strict, poll_interval=poll_interval, timeout=timeout, on_status=on_status,
+        )
+
+    def prepare_submission(
+        self, *, dataset_id: int, frames: dict[str, object], replace: bool = False,
+        codelists: dict[str, list[str]] | None = None, strict_codelists: bool = False,
+        poll_interval: float = 5.0, timeout: float = 600.0,
+    ) -> SubmissionResult:
+        """Preflight, upload, compare full readback, then run RN3 validation.
+
+        Requires provider scope. Reads a baseline before any write, preserves
+        duplicate multiplicity and checks unchanged tables too. Appending again
+        can duplicate rows; failures do not roll back completed imports. Never
+        releases data. See the reporter workflow guide for comparison semantics.
+
+        Args:
+            dataset_id: A reporting dataset belonging to this provider scope.
+                Membership is confirmed before anything is written.
+            frames: ``{table_name: DataFrame}``. Every table is preflighted
+                before the first import, so a rejected frame writes nothing.
+            replace: ``False`` appends (rerunning duplicates rows); ``True``
+                replaces the contents of the uploaded tables only.
+            codelists: ``{field_name: valid_values}`` for LINK / CODELIST
+                fields, from :meth:`get_codelists` or the custodian. Not
+                fetched automatically — ``get_codelists()`` runs a full
+                reference export job, which is minutes of latency for a result
+                that is empty on some dataflows (see ``docs/live-tests-2003.md``).
+            strict_codelists: What to do when *codelists* does not cover a
+                LINK / CODELIST field. ``False`` (the default, matching
+                :meth:`get_codelists` and :meth:`get_template`) warns and logs,
+                then relies on RN3's own validation to catch bad values.
+                ``True`` raises :class:`~reportnet.CodelistResolutionError`
+                before uploading — use it when a submission must not depend on
+                server-side checks.
+            poll_interval: Seconds between job status polls.
+            timeout: Seconds to wait for each individual job.
+
+        Raises:
+            ValueError: Preflight failed; nothing was uploaded.
+            CodelistResolutionError: Code lists were incomplete and
+                *strict_codelists* is ``True``; nothing was uploaded.
+            ReadbackVerificationError: The upload succeeded but the exported
+                data does not match what was sent. Validation was **not**
+                started and completed imports are not rolled back.
+        """
+        from .workflows import prepare_submission
+
+        return prepare_submission(
+            self, dataset_id=dataset_id, frames=frames, replace=replace,
+            codelists=codelists, strict_codelists=strict_codelists,
+            poll_interval=poll_interval, timeout=timeout,
         )
 
     def export_file(
@@ -823,6 +894,50 @@ class DataflowClient:
         """
         handle = self.add_validation_job(dataset_id=dataset_id, provider_id=provider_id)
         handle.wait(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
+        raw = self._list_group_validations_for_backend(
+            dataset_id=dataset_id, provider_id=provider_id
+        )
+        return ValidationResult._from_raw(dataset_id, raw)
+
+    def get_validation_results(
+        self,
+        *,
+        dataset_id: int,
+        provider_id: int | None = None,
+    ) -> ValidationResult:
+        """Read the validation results already published for *dataset_id*.
+
+        The read-only half of :meth:`validate`: it starts no job and waits for
+        nothing, it just parses whatever the listing endpoint currently holds
+        (:meth:`list_group_validations_dl` for BigData,
+        :meth:`list_group_validations` for Citus — chosen for you).
+
+        Use it when a validation job is already running or has already run.
+        While a run is in progress the listing is cleared, so an empty result
+        can mean "not finished" as easily as "nothing wrong" — check
+        ``result.raw`` for ``totalErrors`` to tell the two apart.
+
+        This is also the right way to wait out a long validation. Reportnet
+        answers a second submission with HTTP 423 **and** surfaces it as an
+        error banner in the web UI, so never poll by re-calling
+        :meth:`add_validation_job`.
+
+        Args:
+            dataset_id: Dataset whose results to read.
+            provider_id: Override the stored ``provider_id`` for this call.
+
+        Returns:
+            A :class:`~reportnet.ValidationResult`, with the untouched response
+            in ``raw``.
+
+        Example::
+
+            try:
+                result = flow.validate(dataset_id=93953, timeout=600.0)
+            except reportnet.JobTimeoutError:
+                # The job can outlive the wait while its results are published.
+                result = flow.get_validation_results(dataset_id=93953)
+        """
         raw = self._list_group_validations_for_backend(
             dataset_id=dataset_id, provider_id=provider_id
         )

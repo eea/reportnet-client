@@ -1,4 +1,5 @@
 import io
+import warnings
 
 import httpx
 import pytest
@@ -148,6 +149,50 @@ def test_to_geodataframe_from_polars():
     assert len(gdf) == 2
     assert gdf.crs.to_epsg() == 4326
     assert gdf.geometry.geom_type.tolist() == ["MultiPolygon", "MultiPolygon"]
+
+
+@pytest.mark.parametrize("empty_only", [False, True])
+def test_to_geodataframe_from_parquet_wkb(empty_only):
+    """RN3 v5 geometry is EWKB, with empty bytes for missing values."""
+    pytest.importorskip("geopandas")
+    pl = pytest.importorskip("polars")
+    shapely = pytest.importorskip("shapely")
+    import reportnet
+
+    point = shapely.set_srid(shapely.Point(12, 55), 4258)
+    encoded = shapely.to_wkb(point, include_srid=True)
+    df = pl.DataFrame({"geometry": [b"", None, b"" if empty_only else encoded]})
+    gdf = reportnet.to_geodataframe(df, "geometry", crs="EPSG:4258")
+    assert gdf.crs.to_epsg() == 4258
+    assert gdf.geometry.isna().tolist() == [True, True, empty_only]
+    if not empty_only:
+        assert gdf.geometry.iloc[2].equals(point)
+
+
+def test_to_geodataframe_warns_when_ewkb_srid_contradicts_crs(caplog):
+    """The default 4326 would silently mislabel dataflow 2003's 4258 geometry."""
+    pytest.importorskip("geopandas")
+    pl = pytest.importorskip("polars")
+    shapely = pytest.importorskip("shapely")
+    import reportnet
+
+    point = shapely.set_srid(shapely.Point(12, 55), 4258)
+    df = pl.DataFrame({"geometry": [shapely.to_wkb(point, include_srid=True)]})
+
+    with pytest.warns(UserWarning, match="EPSG:4258"):
+        gdf = reportnet.to_geodataframe(df, "geometry")
+    assert any("EPSG:4258" in record.message for record in caplog.records)
+    # The requested CRS is still honoured — the caller is told, not overruled.
+    assert gdf.crs.to_epsg() == 4326
+
+    # Naming the real CRS, or shipping WKB without an SRID, is silent.
+    caplog.clear()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert reportnet.to_geodataframe(df, "geometry", crs="EPSG:4258").crs.to_epsg() == 4258
+        plain = pl.DataFrame({"geometry": [shapely.to_wkb(shapely.Point(12, 55))]})
+        assert reportnet.to_geodataframe(plain, "geometry").crs.to_epsg() == 4326
+    assert not caplog.records
 
 
 def test_to_file_tuple_from_geodataframe():

@@ -22,6 +22,11 @@ if TYPE_CHECKING:
     NativeFrame: TypeAlias = polars.DataFrame | pandas.DataFrame
 
 __all__ = [
+    "ExportVerification",
+    "ExportResult",
+    "OperationEvidence",
+    "ReadbackVerification",
+    "SubmissionResult",
     "DataflowInfo",
     "DataflowContents",
     "Capabilities",
@@ -293,7 +298,7 @@ class DataflowContents:
 
 @dataclass(frozen=True)
 class Capabilities:
-    """What the current API key is allowed to do on one dataflow.
+    """Inferred request scoping, not a complete permission matrix.
 
     Reportnet grants permissions per *key role*, and the API has no endpoint
     that reports the role — so this is probed. The distinction matters because
@@ -302,7 +307,7 @@ class Capabilities:
     custodian key is refused if it does.
 
     Obtained from :meth:`~reportnet.DataflowClient.capabilities`; cached, since
-    a key's role does not change.
+    results may be refreshed after permissions change.
 
     Example::
 
@@ -367,7 +372,7 @@ class Capabilities:
         if not self.is_usable:
             return f"dataflow {self.dataflow_id}: key not usable"
         extra = "; reads must be provider-scoped" if self.needs_provider_scope else ""
-        return f"dataflow {self.dataflow_id}: {self.role} key{extra}"
+        return f"dataflow {self.dataflow_id}: inferred {self.role} key{extra}"
 
 
 # ── Schema models ─────────────────────────────────────────────────────────────
@@ -758,3 +763,102 @@ class ValidationResult:
         return cls(dataset_id=dataset_id, issues=issues, raw=raw)
 
 
+
+
+@dataclass(frozen=True)
+class ExportVerification:
+    """Structural export checks. Empty tables are reported, not assumed incorrect.
+
+    ``ok`` checks table/column coverage only, not values, row counts or QC rules.
+    """
+
+    dataset_id: int
+    expected_tables: tuple[str, ...]
+    actual_tables: tuple[str, ...]
+    missing_tables: tuple[str, ...]
+    unexpected_tables: tuple[str, ...]
+    missing_columns: dict[str, tuple[str, ...]]
+    unexpected_columns: dict[str, tuple[str, ...]]
+    row_counts: dict[str, int]
+
+    @property
+    def empty_tables(self) -> tuple[str, ...]:
+        return tuple(sorted(name for name, count in self.row_counts.items() if count == 0))
+
+    @property
+    def ok(self) -> bool:
+        return not (self.missing_tables or self.unexpected_tables
+                    or self.missing_columns or self.unexpected_columns)
+
+    def summary(self) -> str:
+        return (
+            f"dataset {self.dataset_id}: structure {'matches' if self.ok else 'MISMATCH'}; "
+            f"missing tables={list(self.missing_tables)}, "
+            f"unexpected tables={list(self.unexpected_tables)}, "
+            f"missing columns={self.missing_columns}, "
+            f"unexpected columns={self.unexpected_columns}; "
+            f"empty tables={list(self.empty_tables)}"
+        )
+
+
+@dataclass(frozen=True)
+class ExportResult:
+    """Downloaded frames and their structural verification; no rows are discarded."""
+
+    frames: dict[str, Any]
+    verification: ExportVerification
+
+
+@dataclass(frozen=True)
+class OperationEvidence:
+    """Latest observation for one exact request scope on this client/key.
+
+    None means not checked, never permission granted. HTTP acceptance,
+    structural payload checks and workflow readback are separate facts.
+    ``detail`` contains diagnostic stages, not credentials or data rows.
+    """
+
+    operation: str
+    dataflow_id: int
+    dataset_id: int | None
+    provider_id: int | None
+    version: int | None
+    table_schema_id: str | None
+    observed_at: str
+    request_accepted: bool | None
+    payload_verified: bool | None = None
+    workflow_verified: bool | None = None
+    detail: str = ""
+    data_provider_codes: str | None = None
+
+
+@dataclass(frozen=True)
+class ReadbackVerification:
+    """Comparison of full row multisets; duplicate multiplicity is preserved."""
+
+    dataset_id: int
+    missing_rows: dict[str, int]
+    unexpected_rows: dict[str, int]
+
+    @property
+    def ok(self) -> bool:
+        return not (self.missing_rows or self.unexpected_rows)
+
+    def summary(self) -> str:
+        return (f"dataset {self.dataset_id}: readback {'matches' if self.ok else 'MISMATCH'}; "
+                f"missing rows={self.missing_rows}, unexpected rows={self.unexpected_rows}")
+
+
+@dataclass(frozen=True)
+class SubmissionResult:
+    """Preparation outcome, never an API release or a guarantee of acceptance."""
+
+    dataset_id: int
+    import_job_ids: tuple[int, ...]
+    export: ExportResult
+    readback: ReadbackVerification
+    validation: ValidationResult
+
+    @property
+    def ready_for_review(self) -> bool:
+        return self.export.verification.ok and self.readback.ok and self.validation.ok

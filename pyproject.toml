@@ -80,3 +80,13 @@ select = ["E", "F", "I"]
 [tool.mypy]
 strict = true
 mypy_path = "src"
+
+# pyproj (a geopandas dependency, used to resolve a CRS to its EPSG code) ships
+# py.typed, so an inline `type: ignore` is flagged as unused wherever it IS
+# installed — but CI type-checks without the spatial extra, where the module is
+# missing entirely. An override is the only thing that satisfies both.
+# shapely and geopandas need no entry: they are untyped, so their inline
+# `type: ignore[import-untyped]` comments are correct in both environments.
+[[tool.mypy.overrides]]
+module = ["pyproj.*"]
+ignore_missing_imports = true
