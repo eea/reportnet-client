@@ -899,6 +899,50 @@ class DataflowClient:
         )
         return ValidationResult._from_raw(dataset_id, raw)
 
+    def get_validation_results(
+        self,
+        *,
+        dataset_id: int,
+        provider_id: int | None = None,
+    ) -> ValidationResult:
+        """Read the validation results already published for *dataset_id*.
+
+        The read-only half of :meth:`validate`: it starts no job and waits for
+        nothing, it just parses whatever the listing endpoint currently holds
+        (:meth:`list_group_validations_dl` for BigData,
+        :meth:`list_group_validations` for Citus — chosen for you).
+
+        Use it when a validation job is already running or has already run.
+        While a run is in progress the listing is cleared, so an empty result
+        can mean "not finished" as easily as "nothing wrong" — check
+        ``result.raw`` for ``totalErrors`` to tell the two apart.
+
+        This is also the right way to wait out a long validation. Reportnet
+        answers a second submission with HTTP 423 **and** surfaces it as an
+        error banner in the web UI, so never poll by re-calling
+        :meth:`add_validation_job`.
+
+        Args:
+            dataset_id: Dataset whose results to read.
+            provider_id: Override the stored ``provider_id`` for this call.
+
+        Returns:
+            A :class:`~reportnet.ValidationResult`, with the untouched response
+            in ``raw``.
+
+        Example::
+
+            try:
+                result = flow.validate(dataset_id=93953, timeout=600.0)
+            except reportnet.JobTimeoutError:
+                # The job can outlive the wait while its results are published.
+                result = flow.get_validation_results(dataset_id=93953)
+        """
+        raw = self._list_group_validations_for_backend(
+            dataset_id=dataset_id, provider_id=provider_id
+        )
+        return ValidationResult._from_raw(dataset_id, raw)
+
     def _list_group_validations_for_backend(
         self,
         *,

@@ -357,13 +357,21 @@ def _(mo):
     ## 7. Validate
 
     Local checks cannot run Reportnet's own rules — those are SQL expressions
-    held server-side, and they see the whole dataset, not just your table.
-    `validate()` triggers a run, waits for it, and parses the result.
+    held server-side, and they see the **whole dataset**, not just your table.
+    That is the whole point of this step: it finds what no amount of local
+    checking can.
 
-    **Expect something to remain.** This dataset is a shared test dataflow whose
-    other mandatory tables are empty, and `Industries` is only one table in it.
-    A remaining issue here is normal, and is exactly the sort of thing that only
-    a server-side run can tell you.
+    `validate()` submits one job and then polls its status. Two things about
+    that are worth knowing before you run it:
+
+    - It can take **many minutes** on a shared dataflow. The job queues behind
+      everyone else's.
+    - **Never resubmit while one is running.** Reportnet answers a second
+      submission with HTTP 423, and every rejected attempt shows up as a red
+      error banner in the Reportnet web UI for whoever is looking at it.
+
+    The next cell therefore submits once, and if the job outlives its timeout it
+    reads the published results instead of asking again.
     """)
     return
 
@@ -377,31 +385,84 @@ def _(connect_ok, mo, upload_done):
 
 
 @app.cell
-def _(connect_ok, dataset, flow, mo, validate_btn):
+def _(connect_ok, dataset, flow, mo, reportnet, validate_btn):
     mo.stop(not connect_ok or not validate_btn.value)
 
-    with mo.status.spinner("Validating — this takes a minute or two…"):
-        result = flow.validate(dataset_id=dataset.id, poll_interval=5.0, timeout=900.0)
+    with mo.status.spinner("Validating — this can take several minutes…"):
+        try:
+            result = flow.validate(dataset_id=dataset.id, poll_interval=10.0, timeout=1200.0)
+            _how = "job reported FINISHED"
+        except reportnet.JobTimeoutError:
+            # The orchestrator can still report IN_PROGRESS after the results
+            # have been published. Read them rather than submitting again —
+            # a second submission is a 423 and an error banner in the web UI.
+            result = flow.get_validation_results(dataset_id=dataset.id)
+            _how = "job still running; read the published results instead"
 
-    mo.md(f"**{result.summary()}**")
+    mo.md(f"**{result.summary()}**  \n_{_how}_")
     return (result,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Reading the result
+
+    Reportnet groups its findings: one row per *rule that fired*, with
+    `record_count` saying how many of your records it fired on. So a single
+    line can stand for every row in the table.
+
+    Four levels, in descending severity: `BLOCKER`, `ERROR`, `WARNING`, `INFO`.
+    Only a `BLOCKER` stops a release.
+    """)
+    return
 
 
 @app.cell
 def _(mo, result):
     mo.stop(result is None)
 
-    _mine = [i for i in result.issues if i.table == "Industries"]
-    _other = [i for i in result.issues if i.table != "Industries"]
+    _levels = ("BLOCKER", "ERROR", "WARNING", "INFO")
+    _counts = {lvl: sum(1 for i in result.issues if i.level == lvl) for lvl in _levels}
     mo.vstack([
-        mo.md(f"### Industries — {len(_mine)} issue(s)"),
-        mo.md("  \n".join(f"- **{i.level}** · `{i.field or '—'}` — {i.message}"
-                          for i in _mine) or "_None._"),
-        mo.md(f"### Elsewhere in the dataset — {len(_other)} issue(s)"),
-        mo.md("These belong to tables this notebook did not touch; they are the "
-              "dataset's pre-existing state, not a result of your upload."),
-        result.to_frame(),
+        mo.md("  ".join(f"**{lvl}**: {n}" for lvl, n in _counts.items() if n)
+              or "**No issues.**"),
+        result.to_frame() if result.issues else mo.md(""),
     ])
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### What the remaining issue means
+
+    On a run of this notebook the result was a single grouped issue:
+
+    | | |
+    |---|---|
+    | Level | `ERROR` — not a `BLOCKER`, so it does not stop a release |
+    | Table / field | `Industries` · `repCode` |
+    | Rule | `RelationalTest-12-Industries` |
+    | Message | *Data in the dataset are not coherent* |
+    | Records | 4 — every row we uploaded |
+
+    **This is not a mistake in our four rows.** `repCode` is the report
+    identifier that ties the whole dataset together: fourteen of the fifteen
+    tables carry it, and `ReportPeriod` is the table that declares which report
+    periods exist. We uploaded `Industries` with `repCode = "IT2026"` while
+    `ReportPeriod` is still **empty**, so there is no report period for those
+    rows to belong to. The rule is doing its job.
+
+    That is the shape of a *relational* rule, and the reason this step cannot be
+    skipped: every local check in section 4 passed, because each looked at one
+    column of one table. Only the server sees that `Industries.repCode` has
+    nothing to join to. Fill in `ReportPeriod` and this clears.
+
+    So: two errors caught on your laptop in seconds, one caught by the server
+    that no local check could have found. That is the division of labour to
+    expect.
+    """)
     return
 
 

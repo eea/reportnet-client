@@ -267,6 +267,33 @@ def test_single_table_export_checks_only_requested_table(mock_router, client):
     assert result.verification.expected_tables == ("Items",)
 
 
+def test_get_validation_results_reads_without_starting_a_job(mock_router, client):
+    """Resubmitting to wait is a 423 and an error banner in the RN3 UI."""
+    _, _, _, validate = routes(mock_router, validation={
+        "idDataset": 100, "totalErrors": 4, "errors": [
+            {"levelError": "ERROR", "message": "Data in the dataset are not coherent",
+             "nameTableSchema": "Items", "nameFieldSchema": "code",
+             "numberOfRecords": "4", "shortCode": "RelationalTest-12"}]})
+    me = client.for_dataflow(2).for_provider(64)
+
+    result = me.get_validation_results(dataset_id=100)
+    assert validate.call_count == 0          # no job submitted
+    assert [i.level for i in result.issues] == ["ERROR"]
+    assert result.issues[0].record_count == 4
+    assert result.issues[0].short_code == "RelationalTest-12"
+    assert result.has_errors and not result.has_blockers
+    assert result.raw["totalErrors"] == 4
+
+
+def test_get_validation_results_is_empty_while_a_run_is_in_progress(mock_router, client):
+    """RN3 clears the listing mid-run: empty is not the same as clean."""
+    routes(mock_router, validation={"idDataset": 100, "errors": []})
+    result = client.for_dataflow(2).for_provider(64).get_validation_results(dataset_id=100)
+    assert result.ok and not result.issues
+    # totalErrors absent is how the caller tells "not finished" from "nothing wrong".
+    assert result.raw.get("totalErrors") is None
+
+
 def test_permission_evidence_does_not_probe_or_invent_permissions(mock_router, client):
     assert client.for_dataflow(2).permission_evidence() == ()
     assert len(mock_router.calls) == 0
