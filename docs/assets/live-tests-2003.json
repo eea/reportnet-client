@@ -1,0 +1,979 @@
+{
+  "date": "2026-09-08",
+  "dataflow_id": 2003,
+  "probes": [
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataflow/v1/2003",
+      "params": {
+        "providerId": 17
+      },
+      "status": 403,
+      "seconds": 0.137
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataschema/v1/datasetId/108953",
+      "params": null,
+      "status": 200,
+      "seconds": 0.139,
+      "shape": [
+        "idDataSetSchema",
+        "description",
+        "nameDatasetSchema",
+        "tableSchemas",
+        "webform",
+        "availableInPublic",
+        "referenceDataset"
+      ]
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataschema/v1/datasetId/108958",
+      "params": null,
+      "status": 200,
+      "seconds": 0.113,
+      "shape": [
+        "idDataSetSchema",
+        "description",
+        "nameDatasetSchema",
+        "tableSchemas",
+        "webform",
+        "availableInPublic",
+        "referenceDataset"
+      ]
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataset/getImportRelatedStatistics/108953",
+      "params": null,
+      "status": 200,
+      "seconds": 0.178,
+      "shape": [
+        "6a4504d0bde8560001232b6d",
+        "6a450516bde85600012332cc",
+        "6a4504dabde8560001232b72",
+        "6a4504eebde8560001232e98",
+        "6a450502bde85600012330b5",
+        "6a45053ebde8560001233350",
+        "6a450548bde856000123336f",
+        "6a4504f8bde8560001232fa5",
+        "6a450552bde8560001233382",
+        "6a4504e4bde8560001232c80",
+        "6a4504c6bde8560001232b65",
+        "6a450520bde85600012332d3"
+      ]
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataset/getImportRelatedStatistics/108958",
+      "params": null,
+      "status": 200,
+      "seconds": 0.07,
+      "shape": [
+        "6a450471bde8560001232b15"
+      ]
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataset/checkImportProcess/108953",
+      "params": null,
+      "status": 200,
+      "seconds": 0.054,
+      "shape": [
+        "message",
+        "importInProgress"
+      ]
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/snapshot/v1/historicReleases",
+      "params": {
+        "datasetId": 108953,
+        "dataflowId": 2003
+      },
+      "status": 200,
+      "seconds": 0.087,
+      "shape": 0
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/validation/listGroupValidationsDL/108953",
+      "params": {
+        "dataflowId": 2003
+      },
+      "status": 200,
+      "seconds": 11.573,
+      "shape": [
+        "idDataset",
+        "idDatasetSchema",
+        "nameDataSetSchema",
+        "errors",
+        "totalRecords",
+        "totalErrors",
+        "totalFilteredRecords"
+      ]
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataset/exportDatasetFile",
+      "params": {
+        "datasetId": 108953,
+        "mimeType": "csv"
+      },
+      "status": 404,
+      "seconds": 0.063
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataset/exportDatasetFileDL",
+      "params": {
+        "datasetId": 108953,
+        "mimeType": "zip"
+      },
+      "status": 404,
+      "seconds": 0.048
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/dataflow/private/v1/2003/isBigDataflow",
+      "params": null,
+      "status": 404,
+      "seconds": 0.029
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataflow/v1/2003",
+      "params": {
+        "providerId": 17
+      },
+      "status": 403,
+      "seconds": 0.139
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataschema/v1/datasetId/108953",
+      "params": null,
+      "status": 200,
+      "seconds": 0.328,
+      "shape": [
+        "idDataSetSchema",
+        "description",
+        "nameDatasetSchema",
+        "tableSchemas",
+        "webform",
+        "availableInPublic",
+        "referenceDataset"
+      ]
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataschema/v1/datasetId/108958",
+      "params": null,
+      "status": 200,
+      "seconds": 0.198,
+      "shape": [
+        "idDataSetSchema",
+        "description",
+        "nameDatasetSchema",
+        "tableSchemas",
+        "webform",
+        "availableInPublic",
+        "referenceDataset"
+      ]
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataset/getImportRelatedStatistics/108953",
+      "params": null,
+      "status": 200,
+      "seconds": 0.141,
+      "shape": [
+        "6a4504d0bde8560001232b6d",
+        "6a450516bde85600012332cc",
+        "6a4504dabde8560001232b72",
+        "6a4504eebde8560001232e98",
+        "6a450502bde85600012330b5",
+        "6a45053ebde8560001233350",
+        "6a450548bde856000123336f",
+        "6a4504f8bde8560001232fa5",
+        "6a450552bde8560001233382",
+        "6a4504e4bde8560001232c80",
+        "6a4504c6bde8560001232b65",
+        "6a450520bde85600012332d3"
+      ]
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataset/getImportRelatedStatistics/108958",
+      "params": null,
+      "status": 200,
+      "seconds": 0.071,
+      "shape": [
+        "6a450471bde8560001232b15"
+      ]
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataset/checkImportProcess/108953",
+      "params": null,
+      "status": 200,
+      "seconds": 0.055,
+      "shape": [
+        "message",
+        "importInProgress"
+      ]
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/snapshot/v1/historicReleases",
+      "params": {
+        "datasetId": 108953,
+        "dataflowId": 2003
+      },
+      "status": 403,
+      "seconds": 0.186
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/validation/listGroupValidationsDL/108953",
+      "params": {
+        "dataflowId": 2003,
+        "providerId": 64
+      },
+      "status": 200,
+      "seconds": 3.153,
+      "shape": [
+        "idDataset",
+        "idDatasetSchema",
+        "nameDataSetSchema",
+        "errors",
+        "totalRecords",
+        "totalErrors",
+        "totalFilteredRecords"
+      ]
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataset/exportDatasetFile",
+      "params": {
+        "datasetId": 108953,
+        "mimeType": "csv"
+      },
+      "status": 404,
+      "seconds": 0.055
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataset/exportDatasetFileDL",
+      "params": {
+        "datasetId": 108953,
+        "mimeType": "zip"
+      },
+      "status": 404,
+      "seconds": 0.051
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/dataflow/private/v1/2003/isBigDataflow",
+      "params": null,
+      "status": 404,
+      "seconds": 0.036
+    }
+  ],
+  "rule_probes": [
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/rules/6a450429bde8560001232ac6/dataflow/2003",
+      "params": {},
+      "status": 403,
+      "bytes": 137
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/rules/6a450429bde8560001232ac6/dataflow/2003",
+      "params": {
+        "providerId": 64
+      },
+      "status": 403,
+      "bytes": 137
+    },
+    {
+      "role": "custodian",
+      "method": "GET",
+      "path": "/rules/historicDatasetRules",
+      "params": {
+        "datasetId": 108946
+      },
+      "status": 403,
+      "bytes": 119
+    },
+    {
+      "role": "custodian",
+      "method": "POST",
+      "path": "/rules/evaluateSqlRule",
+      "params": {
+        "datasetId": 108946
+      },
+      "status": 403,
+      "bytes": 114
+    },
+    {
+      "role": "custodian",
+      "method": "POST",
+      "path": "/dataset/exportFile",
+      "params": {
+        "datasetId": 108953,
+        "tableSchemaId": "6a4504c6bde8560001232b65",
+        "mimeType": "csv"
+      },
+      "status": 403,
+      "bytes": 111
+    },
+    {
+      "role": "custodian",
+      "method": "POST",
+      "path": "/dataset/exportFileDL",
+      "params": {
+        "datasetId": 108953,
+        "tableSchemaId": "6a4504c6bde8560001232b65",
+        "mimeType": "csv"
+      },
+      "status": 403,
+      "bytes": 113
+    },
+    {
+      "role": "custodian",
+      "method": "POST",
+      "path": "/rules/exportQC/108953",
+      "params": {},
+      "status": 403,
+      "bytes": 114
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/rules/6a450429bde8560001232ac6/dataflow/2003",
+      "params": {},
+      "status": 403,
+      "bytes": 137
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/rules/6a450429bde8560001232ac6/dataflow/2003",
+      "params": {
+        "providerId": 64
+      },
+      "status": 403,
+      "bytes": 137
+    },
+    {
+      "role": "reporter",
+      "method": "GET",
+      "path": "/rules/historicDatasetRules",
+      "params": {
+        "datasetId": 108946
+      },
+      "status": 403,
+      "bytes": 119
+    },
+    {
+      "role": "reporter",
+      "method": "POST",
+      "path": "/rules/evaluateSqlRule",
+      "params": {
+        "datasetId": 108946
+      },
+      "status": 403,
+      "bytes": 114
+    },
+    {
+      "role": "reporter",
+      "method": "POST",
+      "path": "/dataset/exportFile",
+      "params": {
+        "datasetId": 108953,
+        "tableSchemaId": "6a4504c6bde8560001232b65",
+        "mimeType": "csv"
+      },
+      "status": 403,
+      "bytes": 111
+    },
+    {
+      "role": "reporter",
+      "method": "POST",
+      "path": "/dataset/exportFileDL",
+      "params": {
+        "datasetId": 108953,
+        "tableSchemaId": "6a4504c6bde8560001232b65",
+        "mimeType": "csv"
+      },
+      "status": 403,
+      "bytes": 113
+    },
+    {
+      "role": "reporter",
+      "method": "POST",
+      "path": "/rules/exportQC/108953",
+      "params": {},
+      "status": 403,
+      "bytes": 114
+    }
+  ],
+  "benchmark": [
+    {
+      "kind": "benchmark",
+      "role": "custodian",
+      "dataset_id": 108953,
+      "version": 4,
+      "job_id": 249248,
+      "job_seconds": 27.407,
+      "download_seconds": 0.068,
+      "bytes": 5143
+    },
+    {
+      "kind": "benchmark",
+      "role": "custodian",
+      "dataset_id": 108953,
+      "version": 5,
+      "job_id": 249249,
+      "job_seconds": 56.684,
+      "download_seconds": 0.099,
+      "bytes": 17521
+    },
+    {
+      "kind": "benchmark",
+      "role": "custodian",
+      "dataset_id": 108953,
+      "version": 5,
+      "job_id": 249250,
+      "job_seconds": 58.456,
+      "download_seconds": 0.109,
+      "bytes": 17521
+    },
+    {
+      "kind": "benchmark",
+      "role": "custodian",
+      "dataset_id": 108953,
+      "version": 4,
+      "job_id": 249251,
+      "job_seconds": 62.585,
+      "download_seconds": 0.071,
+      "bytes": 5143
+    },
+    {
+      "kind": "benchmark",
+      "role": "custodian",
+      "dataset_id": 108958,
+      "version": 4,
+      "job_id": 249252,
+      "job_seconds": 77.322,
+      "download_seconds": 1.787,
+      "bytes": 70608896
+    },
+    {
+      "kind": "benchmark",
+      "role": "custodian",
+      "dataset_id": 108958,
+      "version": 5,
+      "job_id": 249253,
+      "job_seconds": 48.175,
+      "download_seconds": 2.809,
+      "bytes": 136230386
+    },
+    {
+      "kind": "benchmark",
+      "role": "custodian",
+      "dataset_id": 108958,
+      "version": 5,
+      "job_id": 249254,
+      "job_seconds": 52.567,
+      "download_seconds": 2.971,
+      "bytes": 136230386
+    },
+    {
+      "kind": "benchmark",
+      "role": "custodian",
+      "dataset_id": 108958,
+      "version": 4,
+      "job_id": 249255,
+      "job_seconds": 60.718,
+      "download_seconds": 1.546,
+      "bytes": 70608896
+    }
+  ],
+  "corrected_parser": [
+    {
+      "dataset_id": 108953,
+      "version": 4,
+      "bytes": 5143,
+      "parse_median_seconds": 0.0003,
+      "tables": {
+        "MSLevel": [
+          0,
+          18
+        ],
+        "Reporter": [
+          0,
+          4
+        ],
+        "UWWTPs": [
+          0,
+          68
+        ],
+        "ReceivingAreasSASA": [
+          0,
+          5
+        ],
+        "Industries": [
+          0,
+          9
+        ],
+        "ReportPeriod": [
+          0,
+          7
+        ],
+        "DischargePoints": [
+          0,
+          30
+        ],
+        "ReceivingAreasSA54": [
+          0,
+          10
+        ],
+        "ReceivingAreasLSA": [
+          0,
+          12
+        ],
+        "ReceivingAreasSAMain": [
+          0,
+          17
+        ],
+        "Agglomerations": [
+          0,
+          45
+        ],
+        "Contacts": [
+          0,
+          10
+        ],
+        "ReceivingAreasSALSAPredecessor": [
+          0,
+          6
+        ],
+        "ReceivingAreasSAParameter": [
+          0,
+          9
+        ],
+        "UwwtpAgglos": [
+          0,
+          9
+        ]
+      }
+    },
+    {
+      "dataset_id": 108953,
+      "version": 5,
+      "bytes": 17521,
+      "parse_median_seconds": 0.0015,
+      "tables": {
+        "ReceivingAreasSASA": [
+          0,
+          6
+        ],
+        "Contacts": [
+          0,
+          11
+        ],
+        "UWWTPs": [
+          0,
+          69
+        ],
+        "DischargePoints": [
+          0,
+          31
+        ],
+        "MSLevel": [
+          0,
+          19
+        ],
+        "UwwtpAgglos": [
+          0,
+          10
+        ],
+        "ReceivingAreasSA54": [
+          0,
+          11
+        ],
+        "ReceivingAreasLSA": [
+          0,
+          13
+        ],
+        "ReceivingAreasSAParameter": [
+          0,
+          10
+        ],
+        "ReceivingAreasSAMain": [
+          0,
+          18
+        ],
+        "Agglomerations": [
+          0,
+          46
+        ],
+        "ReceivingAreasSALSAPredecessor": [
+          0,
+          7
+        ],
+        "ReportPeriod": [
+          0,
+          8
+        ],
+        "Industries": [
+          0,
+          10
+        ],
+        "Reporter": [
+          0,
+          5
+        ]
+      }
+    },
+    {
+      "dataset_id": 108958,
+      "version": 4,
+      "bytes": 70608896,
+      "parse_median_seconds": 0.6246,
+      "tables": {
+        "ProtectedArea": [
+          989,
+          30
+        ]
+      }
+    },
+    {
+      "dataset_id": 108958,
+      "version": 5,
+      "bytes": 136230386,
+      "parse_median_seconds": 0.626,
+      "tables": {
+        "ProtectedArea": [
+          989,
+          31
+        ]
+      },
+      "verified_geometry_count": 914,
+      "crs": "EPSG:4258"
+    }
+  ],
+  "reference_exports": [
+    {
+      "role": "reporter",
+      "dataset_id": 108961,
+      "version": 4,
+      "job_id": 249259,
+      "tables": {
+        "LegalBasisLevel": [
+          0,
+          6
+        ],
+        "NameLanguage": [
+          0,
+          6
+        ],
+        "SizeUom": [
+          0,
+          6
+        ],
+        "ZoneType": [
+          0,
+          6
+        ],
+        "SpecialisedZoneType": [
+          0,
+          6
+        ],
+        "IdentifierScheme": [
+          0,
+          6
+        ],
+        "WiseEvolutionType": [
+          0,
+          6
+        ]
+      },
+      "resolution": "resolved 0/10 LINK/CODELIST field(s); unresolved: ['legalBasisLevel', 'nameLanguage', 'predecessorsIdentifierScheme', 'relatedZoneIdentifierScheme', 'sizeUom', 'specialisedZoneType', 'successorsIdentifierScheme', 'thematicIdIdentifierScheme', 'wiseEvolutionType', 'zoneType']",
+      "resolved": [],
+      "unresolved": [
+        "legalBasisLevel",
+        "nameLanguage",
+        "predecessorsIdentifierScheme",
+        "relatedZoneIdentifierScheme",
+        "sizeUom",
+        "specialisedZoneType",
+        "successorsIdentifierScheme",
+        "thematicIdIdentifierScheme",
+        "wiseEvolutionType",
+        "zoneType"
+      ]
+    },
+    {
+      "role": "reporter",
+      "dataset_id": 108961,
+      "version": 5,
+      "job_id": 249260,
+      "tables": {
+        "indState": [
+          3,
+          5
+        ],
+        "SizeUom": [
+          0,
+          7
+        ],
+        "ReportPeriod-rptMStateKey": [
+          39,
+          5
+        ],
+        "receivingAreas-rcaParameter": [
+          4,
+          5
+        ],
+        "ZoneType": [
+          0,
+          7
+        ],
+        "indBranch": [
+          11,
+          5
+        ],
+        "uwwInspireIDFacility": [
+          1709,
+          6
+        ],
+        "ReceivingAreasSAparameter": [
+          0,
+          11
+        ],
+        "dcpWFDSubunits": [
+          160469,
+          6
+        ],
+        "ReceivingAreasLSA-rcaZtype": [
+          1,
+          5
+        ],
+        "uwwMethodWasteWaterTreated": [
+          3,
+          5
+        ],
+        "Reporter-rptMStateValue": [
+          39,
+          5
+        ],
+        "repReferenceSystem": [
+          3,
+          5
+        ],
+        "rcaMethod54": [
+          3,
+          5
+        ],
+        "dcpState": [
+          3,
+          5
+        ],
+        "uwwPerf": [
+          4,
+          5
+        ],
+        "bigCityID": [
+          666,
+          5
+        ],
+        "aggNuts": [
+          1240,
+          5
+        ],
+        "RelatedZones": [
+          0,
+          38
+        ],
+        "dcpNUTS": [
+          1240,
+          5
+        ],
+        "uwwNUTS": [
+          1240,
+          5
+        ],
+        "aggSewage": [
+          3,
+          5
+        ],
+        "uwwwColleting": [
+          2,
+          5
+        ],
+        "aggState": [
+          3,
+          5
+        ],
+        "dcpWFDwaterbodies": [
+          142502,
+          5
+        ],
+        "SpecialisedZoneType": [
+          0,
+          7
+        ],
+        "uwwState": [
+          3,
+          5
+        ],
+        "LegalBasisLevel": [
+          0,
+          7
+        ],
+        "UWWTPs": [
+          0,
+          69
+        ],
+        "Agglomerations": [
+          0,
+          47
+        ],
+        "countryBoundingBoxes": [
+          202,
+          9
+        ],
+        "rcaSpZTyp": [
+          6,
+          5
+        ],
+        "dcpWaterBodyType": [
+          5,
+          5
+        ],
+        "NameLanguage": [
+          0,
+          7
+        ],
+        "IdentifierScheme": [
+          0,
+          7
+        ],
+        "rcaEvolutionType": [
+          7,
+          5
+        ],
+        "dcpWFD": [
+          177,
+          5
+        ],
+        "dcpIrrigation": [
+          3,
+          5
+        ],
+        "Reporter-rptMStateKey": [
+          39,
+          5
+        ],
+        "ReceivingAreasSAMain": [
+          0,
+          19
+        ],
+        "rcaZtype": [
+          7,
+          5
+        ],
+        "dcpTypeOfReceivingArea": [
+          7,
+          5
+        ],
+        "WiseEvolutionType": [
+          0,
+          7
+        ],
+        "aucMethodPercEnteringUWWTP": [
+          2,
+          5
+        ],
+        "dcpGroundWater": [
+          17852,
+          4
+        ],
+        "ProtectedArea": [
+          0,
+          37
+        ],
+        "aggMethod": [
+          2,
+          5
+        ]
+      },
+      "resolution": "resolved 0/10 LINK/CODELIST field(s); unresolved: ['legalBasisLevel', 'nameLanguage', 'predecessorsIdentifierScheme', 'relatedZoneIdentifierScheme', 'sizeUom', 'specialisedZoneType', 'successorsIdentifierScheme', 'thematicIdIdentifierScheme', 'wiseEvolutionType', 'zoneType']",
+      "resolved": [],
+      "unresolved": [
+        "legalBasisLevel",
+        "nameLanguage",
+        "predecessorsIdentifierScheme",
+        "relatedZoneIdentifierScheme",
+        "sizeUom",
+        "specialisedZoneType",
+        "successorsIdentifierScheme",
+        "thematicIdIdentifierScheme",
+        "wiseEvolutionType",
+        "zoneType"
+      ]
+    }
+  ],
+  "spatial_equivalence": {
+    "geometry_line": {
+      "v4_formats": [
+        "GeoJSON"
+      ],
+      "v5_srids": [
+        4258
+      ],
+      "nonempty": 75,
+      "equal": true
+    },
+    "geometry_polygon": {
+      "v4_formats": [
+        "GeoJSON"
+      ],
+      "v5_srids": [
+        4258
+      ],
+      "nonempty": 914,
+      "equal": true
+    },
+    "nongeometry_equal_empty_normalized": true
+  }
+}

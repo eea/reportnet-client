@@ -247,6 +247,25 @@ def test_zip_to_frames_parquet():
     assert frames["Sites"].shape == (1, 1)
 
 
+def test_zip_to_frames_parquet_nested_tables_and_partitions():
+    """Production v5 uses repeated leaf names across tables and partitions."""
+    import polars as pl
+
+    from reportnet._util import zip_to_frames
+
+    export_id = "e700eff6-1f25-4537-abd6-5df8a6bf10d0"
+    frames = zip_to_frames(_make_parquet_zip(
+        (f"Emissions/Emissions_{export_id}/0_0_0.parquet", pl.DataFrame({"id": [1]})),
+        (f"Emissions/Emissions_{export_id}/0_0_1.parquet", pl.DataFrame({"id": [2]})),
+        (f"Sites/Sites_{export_id}/0_0_0.parquet", pl.DataFrame({"name": ["Dublin"]})),
+        (f"outer/Empty/Empty_{export_id}/0_0_0.parquet", pl.DataFrame(schema={"id": pl.Int64})),
+    ))
+    assert set(frames) == {"Emissions", "Sites", "Empty"}
+    assert frames["Emissions"]["id"].to_list() == [1, 2]
+    assert frames["Sites"]["name"].to_list() == ["Dublin"]
+    assert frames["Empty"].schema == {"id": pl.Int64}
+
+
 def test_zip_to_frames_parquet_strips_path_prefix():
     pl = pytest.importorskip("polars")
     from reportnet._util import zip_to_frames

@@ -35,6 +35,7 @@ temp/
 
 # Local-only notes
 REVIEW.md
+AGENTS.md
 
 # Type checking
 .mypy_cache/

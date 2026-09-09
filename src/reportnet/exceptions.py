@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .models import ExportVerification, ReadbackVerification
+
 
 class ReportnetError(Exception):
     pass
@@ -73,3 +78,20 @@ class JobTimeoutError(ReportnetError):
     def __init__(self, job_id: int) -> None:
         self.job_id = job_id
         super().__init__(f"Timed out waiting for job {job_id}")
+
+
+class ExportVerificationError(ReportnetError):
+    """An export did not match the requested schema; inspect ``verification``."""
+
+    def __init__(self, verification: "ExportVerification") -> None:
+        self.verification = verification
+        super().__init__(verification.summary())
+
+
+class ReadbackVerificationError(ReportnetError):
+    """Uploaded data did not match readback. Writes may already have completed."""
+
+    def __init__(self, verification: "ReadbackVerification") -> None:
+        self.verification = verification
+        super().__init__(verification.summary() + "; validation was not started. "
+                         "Inspect current data before retrying; uploads are not rolled back.")

@@ -1,5 +1,8 @@
 # Validate a dataset
 
+This runs existing rules and reads validation results. For creating rules and
+downloading their definitions, see [QC authoring](workflows.md#custodian-admin-author-quality-control-rules).
+
 ## Trigger validation
 
 ```python
@@ -51,7 +54,7 @@ with open("validation_snapshot.csv", "wb") as f:
     f.write(csv_bytes)
 ```
 
-## Release history
+## Release history (custodian)
 
 ```python
 releases = ie.list_historic_releases(dataset_id=93953)

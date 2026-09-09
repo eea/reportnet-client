@@ -1,0 +1,5 @@
+repCode,indState,indCodePlant,indNamePlant,indBranch,indOrganicLoad,indConditions,indDateCompliance
+IT2026,1,IT-IND-001,Latteria Padana,MILK,12500,true,2024-06-30
+IT2026,1,IT-IND-002,Birrificio Adige,BEER,8400,true,2025-03-15
+IT2026,2,IT-IND-003,Conserve Emilia,FRUIT,one,false,2023-11-02
+IT2026,1,IT-IND-004,Macello Lombardo,MEAT,20750,true,2024-01-20

@@ -8,9 +8,14 @@ This page exists because most of this library's value is hard-won knowledge
 about a partly-undocumented API. Negative results are worth as much as code:
 without them, the next person re-derives them.
 
-*Last verified: 17 August 2026, against production (dataflows 1619 / 2003).
+*Baseline verified: 17 August 2026, against production (dataflows 1619 / 2003).
 The endpoint behaviour below comes from a full `pytest --integration` run:
 58 passed, 4 xfailed.*
+
+The [8 September 2026 live audit of dataflow 2003](live-tests-2003.md)
+adds a two-key permission comparison and v4/v5 export measurements. It
+supersedes older role assumptions below: legacy single-table exports also
+fail for the supplied custodian key; release history succeeds for it.
 
 ## There is no "release" endpoint
 
@@ -66,7 +71,7 @@ dataflow 1619 (see `tests/test_integration.py`):
 | `GET /orchestrator/jobs/pollForJobStatus/{jobId}` | No | Yes | **Works** |
 | `GET /validation/listGroupValidationsDL/{datasetId}` | No | Yes | **Works** |
 | `GET /dataset/v4/etlExport/{datasetId}` | Yes | Yes | **Works** |
-| `POST /dataset/exportFile` | No | Yes | 403 — needs extra permissions |
+| `POST /dataset/exportFile` | No | Yes | 403 with both tested keys (2003 audit) |
 | `GET /dataset/exportDatasetFile` | No | Yes | **404** |
 | `GET /dataset/exportDatasetFileDL` | No | Yes | **404** |
 | `GET /snapshot/v1/historicReleases` | Yes | — | 403 — needs custodian access |
@@ -98,12 +103,12 @@ may not be permitted to call them:
 
 | Endpoint | Client method | Result |
 |---|---|---|
-| `POST /dataset/exportFile` | `export_file()` | 403 — needs additional permissions |
+| `POST /dataset/exportFile` | `export_file()` | 403 with reporter and custodian keys (2003 audit) |
 | `GET /snapshot/v1/historicReleases` | `list_historic_releases()` | 403 — needs custodian access |
 
-A 403 here means the key lacks the right, not that the call is malformed — the
-client raises `AuthError` either way, so check your key's role before assuming
-a bug.
+A 403 does not identify its cause by itself. Role, dataset type, provider
+parameters and API-key route restrictions can all matter. The client raises
+`AuthError`; do not assume that a custodian key will fix every refusal.
 
 ## `/private/` routes are not reachable with an API key
 
@@ -178,7 +183,8 @@ Measured on dataflow 2003 (BigData) with a Reporter key for IT:
 | `GET /dataflow/v1/{id}?providerId=<another provider>` | ❌ 403 |
 | `GET /dataset/v{3,4,5}/etlExport/{id}` on its **own reporting dataset**, **with** `providerId` | ✅ |
 | The same export **without** `providerId` | ❌ 403 |
-| Exporting **reference / EU / data-collection / test** datasets | ❌ 403 (role table forbids it) |
+| Exporting reference dataset **108961** with provider scope | ✅ September 2026 retest; supersedes earlier 403 assumption |
+| Exporting **EU / data-collection / test** datasets | Earlier 403; not retested in September audit |
 | `exportFile`, `exportFileDL` | ❌ 403 |
 | `etlImport`, v1 `importFileData`, `generateImportPresignedUrl` | ❌ 403 |
 | `getSimpleSchema`, `getTableSchemasIds`, `list-imported-files`, `preparations` | ❌ 403 |
@@ -195,8 +201,8 @@ Two consequences worth designing around:
    Another provider's id is refused, so the scoping is enforced rather than
    advisory.
 2. **A reporter *can* export its own reporting dataset** — provided
-   `providerId` is sent. It cannot export reference, EU, data-collection or
-   test datasets; the role tables (below) forbid those.
+   `providerId` is sent. Reference 108961 also succeeded in the September audit.
+   Do not infer a universal reference-export prohibition from the role table.
 
    Independently, `GET /dataset/getImportRelatedStatistics/{id}` gives per-table
    `{"lastImportDate", "numberOfRecordsImported", "fileExtension"}`. Since a
@@ -250,22 +256,13 @@ Two further limits found while loading a real payload
 - `etlImport` is **Citus-only**. On a BigData dataflow `importFileData` is the
   only wrapped write path — `etlImportDL` exists but is not wrapped yet.
 
-## A reporter-scoped key may not read `/dataflow/v1/{id}`
+## Reporter discovery requires provider scope
 
-Keys differ in scope in a way that cuts across the client's layering. One key
-tested on dataflow 2003 could read `/representative/v1/dataflow/{id}` and
-`/dataschema/v1/datasetId/{id}` but got **403 on `/dataflow/v1/{id}`**.
-
-That single endpoint backs `get_dataflow`, `get_reporting_datasets`,
-`is_big_dataflow`, `dataset()`, `ping()` and — indirectly — `import_file`,
-which consults `is_big_dataflow()` to decide whether to send `providerId`.
-Before this was handled, importing with such a key failed at the preflight and
-reported a 403 against `/dataflow/v1/{id}`, *not* the endpoint being called —
-badly misleading when debugging.
-
-`DataflowClient` now degrades instead: when the backend cannot be read it omits
-`providerId` (whose *presence* is what BigData rejects) and `validate()` tries
-the DL listing endpoint before falling back to the Citus one.
+A reporter key receives 403 for the unscoped dataflow read. A provider-scoped
+`DataflowClient` retries with its provider ID and can discover its own datasets,
+read the backend flag and export its reporting data. This is role-dependent;
+BigData does not universally reject `providerId`. Both keys were retested on
+2003 on 8 September 2026.
 
 ## Endpoints that exist but aren't wrapped yet
 
@@ -313,10 +310,10 @@ PY
 No API key is needed — the spec endpoints are public.
 
 
-## Swagger descriptions carry authoritative role tables
+## Swagger descriptions carry published role tables
 
 Each operation's `description` field lists the roles allowed **per dataset
-type**. This is the closest thing to an authoritative permission model the API
+type**. This is the closest thing to a published permission model the API
 publishes, and it is not visible in the endpoint list — only in the operation
 detail. For example `GET /dataset/v4/etlExport/{datasetId}`:
 
@@ -329,9 +326,11 @@ detail. For example `GET /dataset/v4/etlExport/{datasetId}`:
 | EU | CUSTODIAN, STEWARD, OBSERVER, STEWARD SUPPORT |
 | Data collection | CUSTODIAN, STEWARD, OBSERVER, STEWARD SUPPORT |
 
-That table explains observed behaviour exactly: a reporter can export its own
-*reporting* dataset but not a *reference* one. `importFileData` has its own
-table (Reporting: LEAD REPORTER, REPORTER WRITE, NATIONAL COORDINATOR).
+This table is not a complete predictor of live access: the Italy reporter
+exported reference 108961 with provider scope in the September 2026 audit,
+although both v4/v5 descriptions omit reporters from reference roles.
+`importFileData` has its own table (Reporting: LEAD REPORTER, REPORTER WRITE,
+NATIONAL COORDINATOR).
 
 **Read these before concluding a role cannot do something.** Extract them with:
 
