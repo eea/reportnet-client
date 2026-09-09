@@ -26,8 +26,9 @@ To regenerate at a different radius:
 python temp/toulon/extract_toulon.py 40
 ```
 
-`_agglomerations_by_distance.csv` lists each included agglomeration with its distance from
-Toulon, so you can see what a wider or narrower radius would add or drop.
+That run also writes `_agglomerations_by_distance.csv`, listing each included agglomeration
+with its distance from Toulon, so you can see what a wider or narrower radius would add or
+drop. It is a scratch aid, not part of this fixture, and is not kept here.
 
 ## Contents
 
@@ -48,8 +49,8 @@ Reported source tables, named and shaped exactly as in `data_input/`:
 | `MSLevel` | 1 |
 
 Each is written as both `.parquet` (types preserved, what the pipeline loads) and `.csv`
-(for inspection). Files prefixed `_` are derived, not reported data:
-`_results_plants`, `_results_agglomerations`, `_agglomerations_by_distance.csv`.
+(for inspection). Nothing else is kept here — the directory holds reported source tables
+only, no derived or computed output.
 
 `ProtectedArea` is not included — it is not an input to `run_compliance()` and has no key
 linking it to this subset.
