@@ -322,3 +322,119 @@ def test_download_auth_failure_does_not_start_another_export(mock_router, client
         with pytest.raises(reportnet.AuthError):
             client.for_dataflow(2).for_provider(64).export_frames(dataset_id=100, poll_interval=0)
     assert exported.call_count == 1
+
+
+# ── Stale validation results announce themselves ──────────────────────────────
+
+VALIDATION_LISTING = {
+    "idDataset": 10, "errors": [], "totalRecords": 69, "totalErrors": 50,
+}
+
+
+def _jobs(*rows):
+    return {"jobsList": [
+        {"id": i, "jobType": "VALIDATION", "jobStatus": st, "datasetId": 10,
+         "dateAdded": 1789000000000, "dateStatusChanged": 1789000001000, "jobInfo": None}
+        for i, st in rows
+    ]}
+
+
+def test_results_are_flagged_stale_while_a_newer_validation_runs(mock_router, client, caplog):
+    """Reportnet keeps serving the PREVIOUS run's results while a new validation
+    is in flight — no timestamp, no run id, identical numbers. Verified on 2003:
+    a run against changed data reported the earlier totals for over an hour."""
+    import logging
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True})
+    )
+    mock_router.get("/validation/listGroupValidationsDL/10").mock(
+        return_value=httpx.Response(200, json=VALIDATION_LISTING)
+    )
+    mock_router.get("/orchestrator/jobs").mock(
+        return_value=httpx.Response(200, json=_jobs((250046, "IN_PROGRESS"), (249703, "FINISHED")))
+    )
+    with caplog.at_level(logging.WARNING, logger="reportnet.dataflow"):
+        result = dc.get_validation_results(dataset_id=10)
+    assert result.is_stale, "a running validation must mark the listing stale"
+    assert result.superseded_by.id == 250046
+    assert result.job.id == 249703, "results belong to the last FINISHED run"
+    assert any("PREVIOUS run" in r.getMessage() for r in caplog.records)
+
+
+def test_results_are_not_stale_when_no_validation_is_running(mock_router, client):
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True})
+    )
+    mock_router.get("/validation/listGroupValidationsDL/10").mock(
+        return_value=httpx.Response(200, json=VALIDATION_LISTING)
+    )
+    mock_router.get("/orchestrator/jobs").mock(
+        return_value=httpx.Response(200, json=_jobs((249703, "FINISHED")))
+    )
+    result = dc.get_validation_results(dataset_id=10)
+    assert not result.is_stale and result.superseded_by is None
+    assert result.job.id == 249703
+
+
+def test_provenance_is_optional_when_job_history_is_unreadable(mock_router, client):
+    """A key that cannot read job history still gets its results, just without
+    provenance — never a hard failure on a read-only call."""
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True})
+    )
+    mock_router.get("/validation/listGroupValidationsDL/10").mock(
+        return_value=httpx.Response(200, json=VALIDATION_LISTING)
+    )
+    mock_router.get("/orchestrator/jobs").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
+    result = dc.get_validation_results(dataset_id=10)
+    assert result.job is None and not result.is_stale
+    assert result.raw["totalErrors"] == 50
+
+
+def test_results_are_stale_when_data_was_imported_after_the_last_validation(
+    mock_router, client, caplog
+):
+    """The second staleness mode, and the one that bit on 2003: no validation is
+    running, but the data was re-uploaded after the last run finished — so the
+    published results describe data that is no longer in the dataset."""
+    import logging
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True})
+    )
+    mock_router.get("/validation/listGroupValidationsDL/10").mock(
+        return_value=httpx.Response(200, json=VALIDATION_LISTING)
+    )
+    mock_router.get("/orchestrator/jobs").mock(return_value=httpx.Response(200, json={"jobsList": [
+        {"id": 300, "jobType": "IMPORT", "jobStatus": "FINISHED", "datasetId": 10,
+         "dateAdded": 1789000000000, "dateStatusChanged": 1789009000000, "jobInfo": None},
+        {"id": 249703, "jobType": "VALIDATION", "jobStatus": "FINISHED", "datasetId": 10,
+         "dateAdded": 1789000000000, "dateStatusChanged": 1789001000000, "jobInfo": None},
+    ]}))
+    with caplog.at_level(logging.WARNING, logger="reportnet.dataflow"):
+        result = dc.get_validation_results(dataset_id=10)
+    assert result.is_stale, "import finished after the validation → results describe old data"
+    assert result.superseded_by is None, "nothing is running; staleness is from the import"
+    assert any("no longer there" in r.getMessage() for r in caplog.records)
+
+
+def test_results_are_fresh_when_validation_followed_the_last_import(mock_router, client):
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json={"id": 5, "bigData": True})
+    )
+    mock_router.get("/validation/listGroupValidationsDL/10").mock(
+        return_value=httpx.Response(200, json=VALIDATION_LISTING)
+    )
+    mock_router.get("/orchestrator/jobs").mock(return_value=httpx.Response(200, json={"jobsList": [
+        {"id": 249703, "jobType": "VALIDATION", "jobStatus": "FINISHED", "datasetId": 10,
+         "dateAdded": 1789000000000, "dateStatusChanged": 1789009000000, "jobInfo": None},
+        {"id": 300, "jobType": "IMPORT", "jobStatus": "FINISHED", "datasetId": 10,
+         "dateAdded": 1789000000000, "dateStatusChanged": 1789001000000, "jobInfo": None},
+    ]}))
+    assert not dc.get_validation_results(dataset_id=10).is_stale

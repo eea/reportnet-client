@@ -610,3 +610,63 @@ def to_geodataframe(
     pdf = pdf.copy()
     pdf[geometry_col] = geom_series
     return gpd.GeoDataFrame(pdf, geometry=geometry_col, crs=crs)
+
+
+def align_frame(
+    table_schema: Any,
+    frame: object,
+) -> tuple[NativeFrame, list[str], list[str]]:
+    """Return *frame* reshaped to exactly *table_schema*'s columns, in schema order.
+
+    Reportnet rejects an import whose header is not exactly the table's field
+    list — a *subset* fails just as hard as a misspelling, with the job
+    CANCELED and ``info`` reading "Import files contain incorrect headers.
+    Please ensure the headers in your files exactly match the field names of
+    the corresponding tables." Source data almost never arrives in that shape:
+    it carries pipeline artefacts, and it omits fields the source never had.
+
+    So: fields the frame lacks are added empty, columns the schema does not
+    define are dropped, and the rest are reordered. Matching is
+    case-insensitive, because exports and hand-built frames disagree on case
+    (``ReceivingAreasSAparameter`` vs ``…SAParameter``) while Reportnet wants
+    the schema's own spelling.
+
+    Columns typed DATE in the schema are rendered ``YYYY-MM-DD`` when they hold
+    a temporal dtype, since a datetime otherwise serialises with a time part
+    that a DATE field rejects.
+
+    Returns:
+        ``(aligned_frame, added, dropped)`` — the two lists name what changed,
+        for the caller to report. Dropped columns are worth surfacing: a
+        misspelled field shows up as one dropped plus one added.
+    """
+    try:
+        import narwhals as nw
+    except ImportError:
+        raise ImportError(
+            "narwhals is required; install with: pip install reportnet-client[dataframe]"
+        ) from None
+
+    nwf = nw.from_native(frame, eager_only=True)  # type: ignore[call-overload]
+    present = {c.lower(): c for c in nwf.columns}
+    wanted = [f.name for f in table_schema.fields]
+    date_fields = {
+        f.name.lower()
+        for f in table_schema.fields
+        if getattr(f.type, "value", str(f.type)) == "DATE"
+    }
+
+    exprs, added = [], []
+    for name in wanted:
+        source = present.get(name.lower())
+        if source is None:
+            added.append(name)
+            exprs.append(nw.lit(None, dtype=nw.String).alias(name))
+            continue
+        expr = nw.col(source)
+        if name.lower() in date_fields and nwf[source].dtype in (nw.Date, nw.Datetime):
+            expr = expr.dt.to_string("%Y-%m-%d")
+        exprs.append(expr.alias(name))
+
+    dropped = [c for c in nwf.columns if c.lower() not in {w.lower() for w in wanted}]
+    return nw.to_native(nwf.select(exprs)), added, dropped

@@ -278,3 +278,144 @@ def test_import_still_raises_when_owner_is_unknowable(mock_router, client):
     with pytest.raises(Exception):
         dc.import_file(dataset_id=99, file=b"data")
     assert len(route.calls) == 1, "must not retry when there is no alternative"
+
+
+# ── Reference datasets must be unlocked to accept an import ───────────────────
+
+
+def _dataflow_with_locked_reference(updatable=False):
+    return {
+        "id": 5, "bigData": True,
+        "referenceDatasets": [{
+            "id": 20, "dataSetName": "Reference Dataset - Descriptive",
+            "datasetSchema": "s1", "updatable": updatable,
+        }],
+    }
+
+
+def _schema_one_table():
+    return {
+        "idDataSetSchema": "s1", "nameDatasetSchema": "Ref", "description": "",
+        "tableSchemas": [{
+            "idTableSchema": "t1", "nameTableSchema": "T",
+            "recordSchema": {"fieldSchema": [{"id": "f1", "name": "a", "type": "TEXT"}]},
+        }],
+    }
+
+
+def test_import_frames_unlocks_and_relocks_a_reference_dataset(mock_router, client):
+    """A locked reference dataset returns HTTP 200 and then CANCELED with
+    'Import is not allowed for this dataset.' — verified live on 2003."""
+    pl = pytest.importorskip("polars")
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json=_dataflow_with_locked_reference())
+    )
+    mock_router.get("/dataschema/v1/datasetId/20").mock(
+        return_value=httpx.Response(200, json=_schema_one_table())
+    )
+    lock = mock_router.put("/referenceDataset/20").mock(return_value=httpx.Response(200))
+    mock_router.post("/dataset/v2/importFileData/20").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    mock_router.get("/orchestrator/jobs/pollForJobStatus/1").mock(
+        return_value=httpx.Response(200, json={"status": "FINISHED"})
+    )
+    dc.import_frames(dataset_id=20, frames={"T": pl.DataFrame({"a": ["x"]})})
+    states = [c.request.url.params["updatable"] for c in lock.calls]
+    assert states == ["true", "false"], "unlock before import, restore after"
+
+
+def test_import_frames_relocks_even_when_the_import_fails(mock_router, client):
+    """The lock must be restored on failure, or the dataset is left open."""
+    pl = pytest.importorskip("polars")
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json=_dataflow_with_locked_reference())
+    )
+    mock_router.get("/dataschema/v1/datasetId/20").mock(
+        return_value=httpx.Response(200, json=_schema_one_table())
+    )
+    lock = mock_router.put("/referenceDataset/20").mock(return_value=httpx.Response(200))
+    mock_router.post("/dataset/v2/importFileData/20").mock(
+        return_value=httpx.Response(500, text="boom")
+    )
+    with pytest.raises(Exception):
+        dc.import_frames(dataset_id=20, frames={"T": pl.DataFrame({"a": ["x"]})})
+    assert [c.request.url.params["updatable"] for c in lock.calls] == ["true", "false"]
+
+
+def test_import_frames_leaves_an_already_unlocked_reference_dataset_alone(mock_router, client):
+    """Never lock something the caller deliberately left open."""
+    pl = pytest.importorskip("polars")
+    dc = client.for_dataflow(dataflow_id=5)
+    mock_router.get("/dataflow/v1/5").mock(
+        return_value=httpx.Response(200, json=_dataflow_with_locked_reference(updatable=True))
+    )
+    mock_router.get("/dataschema/v1/datasetId/20").mock(
+        return_value=httpx.Response(200, json=_schema_one_table())
+    )
+    lock = mock_router.put("/referenceDataset/20").mock(return_value=httpx.Response(200))
+    mock_router.post("/dataset/v2/importFileData/20").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    mock_router.get("/orchestrator/jobs/pollForJobStatus/1").mock(
+        return_value=httpx.Response(200, json={"status": "FINISHED"})
+    )
+    dc.import_frames(dataset_id=20, frames={"T": pl.DataFrame({"a": ["x"]})})
+    assert not lock.calls, "no lock change when already unlocked"
+
+
+def test_job_failure_surfaces_reportnet_reason(mock_router, client):
+    """The reason is in the poll response's `info`; without it the status alone
+    is unactionable. This cost hours of debugging on 2003."""
+    from reportnet.exceptions import JobFailedError
+    mock_router.post("/dataset/v2/importFileData/10").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    mock_router.get("/orchestrator/jobs/pollForJobStatus/1").mock(
+        return_value=httpx.Response(200, json={
+            "status": "CANCELED",
+            "info": "Import files contain incorrect headers.",
+        })
+    )
+    handle = client.import_file(dataset_id=10, dataflow_id=5, file=b"a\nx")
+    with pytest.raises(JobFailedError) as exc:
+        handle.wait(poll_interval=0)
+    assert exc.value.info == "Import files contain incorrect headers."
+    assert "incorrect headers" in str(exc.value)
+
+
+def test_import_frames_warns_when_a_required_field_is_added_empty(mock_router, client, caplog):
+    """Alignment fixes shape, not content. A required field added empty imports
+    fine and fails validation later — the warning has to come now. On 2003
+    `repCode` is required in all 12 tables and absent from most source extracts."""
+    pl = pytest.importorskip("polars")
+    import logging
+    dc = client.for_dataflow(dataflow_id=5)
+    schema = {
+        "idDataSetSchema": "s1", "nameDatasetSchema": "D", "description": "",
+        "tableSchemas": [{
+            "idTableSchema": "t1", "nameTableSchema": "T",
+            "recordSchema": {"fieldSchema": [
+                {"id": "f1", "name": "repCode", "type": "TEXT", "required": True},
+                {"id": "f2", "name": "note", "type": "TEXT", "required": False},
+                {"id": "f3", "name": "a", "type": "TEXT", "required": False},
+            ]},
+        }],
+    }
+    mock_router.get("/dataflow/v1/5").mock(return_value=httpx.Response(200, json={"id": 5}))
+    mock_router.get("/dataschema/v1/datasetId/10").mock(
+        return_value=httpx.Response(200, json=schema)
+    )
+    mock_router.post("/dataset/v2/importFileData/10").mock(
+        return_value=httpx.Response(200, json=JOB_RESPONSE)
+    )
+    mock_router.get("/orchestrator/jobs/pollForJobStatus/1").mock(
+        return_value=httpx.Response(200, json={"status": "FINISHED"})
+    )
+    with caplog.at_level(logging.INFO, logger="reportnet.dataflow"):
+        dc.import_frames(dataset_id=10, frames={"T": pl.DataFrame({"a": ["x"]})})
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("repCode" in m and "required" in m for m in warnings), warnings
+    assert not any("note" in m for m in warnings), "optional fields must not warn"

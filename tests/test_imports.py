@@ -420,3 +420,53 @@ def test_etl_import_with_no_records_does_not_warn(mock_router, client):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         client.etl_import(dataset_id=1, dataflow_id=2, tables=_etl_body([]))
+
+
+# ── Schema alignment: the "exactly match the field names" rule ────────────────
+
+
+def _table(name, fields):
+    from reportnet.models import TableSchema
+    return TableSchema.from_dict({
+        "idTableSchema": f"t-{name}",
+        "nameTableSchema": name,
+        "recordSchema": {"fieldSchema": [
+            {"id": f"f-{n}", "name": n, "type": t, "pk": False} for n, t in fields
+        ]},
+    })
+
+
+def test_align_frame_adds_missing_and_drops_unknown():
+    """RN3 rejects a header that is not exactly the field list — a subset fails
+    like a typo. Verified live: job CANCELED, 'Import files contain incorrect
+    headers.'"""
+    pl = pytest.importorskip("polars")
+    from reportnet._util import align_frame
+    table = _table("T", [("a", "TEXT"), ("b", "TEXT"), ("c", "TEXT")])
+    df = pl.DataFrame({"c": ["3"], "a": ["1"], "snapshotId": ["x"]})
+    out, added, dropped = align_frame(table, df)
+    assert list(out.columns) == ["a", "b", "c"], "schema order, exactly"
+    assert added == ["b"] and dropped == ["snapshotId"]
+    assert out["b"].to_list() == [None]
+
+
+def test_align_frame_matches_column_names_case_insensitively():
+    """Reference and reporting schemas disagree on case (…SAparameter vs
+    …SAParameter); RN3 wants the schema's own spelling."""
+    pl = pytest.importorskip("polars")
+    from reportnet._util import align_frame
+    table = _table("T", [("rcaCode", "TEXT")])
+    out, added, dropped = align_frame(table, pl.DataFrame({"RCACODE": ["x"]}))
+    assert list(out.columns) == ["rcaCode"] and not added and not dropped
+    assert out["rcaCode"].to_list() == ["x"]
+
+
+def test_align_frame_renders_date_fields_without_a_time_part():
+    pl = pytest.importorskip("polars")
+    from datetime import datetime
+
+    from reportnet._util import align_frame
+    table = _table("T", [("d", "DATE")])
+    df = pl.DataFrame({"d": [datetime(2023, 12, 5, 0, 0)]})
+    out, _, _ = align_frame(table, df)
+    assert out["d"].to_list() == ["2023-12-05"]

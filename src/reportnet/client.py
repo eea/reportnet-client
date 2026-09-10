@@ -30,6 +30,7 @@ from .models import (
     DataflowInfo,
     DatasetSchema,
     ExportResult,
+    JobRecord,
     OperationEvidence,
     ReferenceDataset,
     Reporter,
@@ -661,6 +662,30 @@ class ReportnetClient:
             },
         )
         return response.content
+
+    def list_jobs(
+        self,
+        *,
+        dataflow_id: int,
+        dataset_id: int | None = None,
+        job_type: str | None = None,
+        provider_id: int | None = None,
+        page_size: int = 100,
+    ) -> list[JobRecord]:
+        """GET /orchestrator/jobs — job history, newest first.
+
+        The only source of run provenance: the validation listing itself
+        carries no timestamp or run id.
+        """
+        params: dict[str, object] = {"dataflowId": dataflow_id, "pageSize": page_size}
+        if dataset_id is not None:
+            params["datasetId"] = dataset_id
+        if job_type is not None:
+            params["jobType"] = job_type
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        payload = self._http.get("/orchestrator/jobs", params=params).json()
+        return [JobRecord.from_dict(j) for j in payload.get("jobsList") or []]
 
     def get_schema(self, *, dataset_id: int) -> DatasetSchema:
         """GET /dataschema/v1/datasetId/{datasetId} — table and field definitions."""

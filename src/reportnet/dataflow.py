@@ -10,11 +10,14 @@ never disagree about how to talk to the API.
 from __future__ import annotations
 
 import warnings
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Callable, Literal, Union
+from typing import IO, TYPE_CHECKING, Callable, Iterator, Literal, Union
 
 from ._log import get_logger
 from .exceptions import (
+    APIError,
     AuthError,
     CodelistResolutionError,
     DiscoveryNotPermittedError,
@@ -27,6 +30,7 @@ from .models import (
     DataflowInfo,
     DatasetSchema,
     ExportResult,
+    JobRecord,
     OperationEvidence,
     ReferenceDataset,
     Reporter,
@@ -583,6 +587,48 @@ class DataflowClient:
             }
         return result
 
+    def _reference_dataset(self, dataset_id: int) -> "ReferenceDataset | None":
+        """Return the ReferenceDataset for *dataset_id*, or None if it is not one.
+
+        Returns None when the dataflow cannot be read (a reporter key), which is
+        harmless: reporters cannot import into reference datasets at all.
+        """
+        try:
+            for ref in self.get_dataflow_contents().reference_datasets:
+                if ref.id == dataset_id:
+                    return ref
+        except (AuthError, DiscoveryNotPermittedError):
+            logger.debug("cannot read dataflow %s to classify dataset %s",
+                         self._dataflow_id, dataset_id)
+        return None
+
+    @contextmanager
+    def _reference_unlocked(self, dataset_id: int) -> "Iterator[None]":
+        """Unlock a locked reference dataset for the body, then restore its state.
+
+        A locked reference dataset accepts the import POST with HTTP 200 and then
+        fails the *job* with "Import is not allowed for this dataset." — so the
+        lock has to come off before the data is sent, and the failure gives the
+        caller nothing to act on. Reportnet's documented cycle is unlock, import,
+        re-lock; re-locking is also what regenerates the dataset's public files.
+
+        Restores in a finally so an import that raises still leaves the lock as
+        it was found. Datasets that are not reference datasets pass straight
+        through, as do ones already unlocked — this never locks something the
+        caller left open.
+        """
+        ref = self._reference_dataset(dataset_id)
+        if ref is None or ref.updatable:
+            yield
+            return
+        logger.info("unlocking reference dataset %s (%s) for import", dataset_id, ref.name)
+        self.set_reference_dataset_updatable(dataset_id=dataset_id, updatable=True)
+        try:
+            yield
+        finally:
+            logger.info("re-locking reference dataset %s", dataset_id)
+            self.set_reference_dataset_updatable(dataset_id=dataset_id, updatable=False)
+
     def import_frames(
         self,
         *,
@@ -590,13 +636,27 @@ class DataflowClient:
         frames: dict[str, object],
         replace: bool = False,
         delimiter: str = "|",
+        align: bool = True,
         poll_interval: float = 5.0,
         timeout: float | None = None,
     ) -> None:
         """Import multiple tables from a dict of DataFrames (or DuckDB relations).
 
-        Keys in *frames* must match table names in the dataset schema.
+        Keys in *frames* match table names in the dataset schema, case-insensitively.
         Each table is uploaded and polled to completion sequentially.
+
+        Two things Reportnet requires are handled for you, because getting either
+        wrong fails the *job* rather than the request — HTTP 200, then CANCELED:
+
+        - **Headers must be exactly the table's field list.** Each frame is
+          reshaped with :meth:`~reportnet.TableSchema.align_frame`: missing
+          fields added empty, unknown columns dropped, order fixed, DATE fields
+          rendered ``YYYY-MM-DD``. Dropped columns are logged as warnings, since
+          a misspelling shows up as one dropped and one added. Pass
+          ``align=False`` to upload frames exactly as given.
+        - **Reference datasets must be unlocked to accept an import.** A locked
+          one is unlocked for the duration and restored afterwards; re-locking
+          is also what regenerates its public files.
 
         Also accepts DuckDB relations — they are converted to polars DataFrames
         automatically before serialisation.
@@ -629,23 +689,56 @@ class DataflowClient:
             flow.import_frames(dataset_id=93953, frames={"Table1a": rel})
         """
         schema = self.get_schema(dataset_id=dataset_id)
-        table_map = {t.name: t.id for t in schema.tables}
+        by_name = {t.name.lower(): t for t in schema.tables}
 
+        resolved = []
         for table_name, frame in frames.items():
-            if table_name not in table_map:
-                available = list(table_map)
+            table = by_name.get(table_name.lower())
+            if table is None:
                 raise ValueError(
                     f"Table {table_name!r} not found in dataset {dataset_id}. "
-                    f"Available: {available}"
+                    f"Available: {[t.name for t in schema.tables]}"
                 )
-            handle = self.import_file(
-                dataset_id=dataset_id,
-                file=frame,
-                table_schema_id=table_map[table_name],
-                replace=replace,
-                delimiter=delimiter,
-            )
-            handle.wait(poll_interval=poll_interval, timeout=timeout)
+            if align:
+                from ._util import align_frame
+
+                frame, added, dropped = align_frame(table, frame)
+                if dropped:
+                    # Worth a warning, not a debug line: this is where a
+                    # misspelled field name silently loses its data — it is
+                    # dropped here and re-added empty below.
+                    logger.warning(
+                        "%s: dropped %d column(s) not in the schema: %s",
+                        table.name, len(dropped), dropped[:8],
+                    )
+                required = set(table.required_columns())
+                if missing_required := [c for c in added if c in required]:
+                    # Structural alignment cannot invent values. A required field
+                    # added empty will pass the import and then fail validation,
+                    # so say so now rather than let it surface an hour later.
+                    logger.warning(
+                        "%s: added %s as EMPTY but the schema marks %s required — "
+                        "supply a value before importing or validation will flag it",
+                        table.name, missing_required,
+                        "it" if len(missing_required) == 1 else "them",
+                    )
+                if optional := [c for c in added if c not in required]:
+                    logger.info(
+                        "%s: added %d empty optional column(s): %s",
+                        table.name, len(optional), optional[:8],
+                    )
+            resolved.append((table, frame))
+
+        with self._reference_unlocked(dataset_id):
+            for table, frame in resolved:
+                handle = self.import_file(
+                    dataset_id=dataset_id,
+                    file=frame,
+                    table_schema_id=table.id,
+                    replace=replace,
+                    delimiter=delimiter,
+                )
+                handle.wait(poll_interval=poll_interval, timeout=timeout)
 
     def etl_import(
         self,
@@ -945,10 +1038,55 @@ class DataflowClient:
         """
         handle = self.add_validation_job(dataset_id=dataset_id, provider_id=provider_id)
         handle.wait(poll_interval=poll_interval, timeout=timeout, on_status=on_status)
-        raw = self._list_group_validations_for_backend(
-            dataset_id=dataset_id, provider_id=provider_id
+        return self.get_validation_results(dataset_id=dataset_id, provider_id=provider_id)
+
+    def list_jobs(
+        self,
+        *,
+        dataset_id: int | None = None,
+        job_type: str | None = None,
+        provider_id: int | None = None,
+        page_size: int = 100,
+    ) -> list[JobRecord]:
+        """Return this dataflow's job history, newest first.
+
+        Example::
+
+            runs = flow.list_jobs(dataset_id=108952, job_type="VALIDATION")
+            print(runs[0].status, runs[0].status_changed_at)
+        """
+        return self._client.list_jobs(
+            dataflow_id=self._dataflow_id,
+            dataset_id=dataset_id,
+            job_type=job_type,
+            provider_id=self._pid(provider_id),
+            page_size=page_size,
         )
-        return ValidationResult._from_raw(dataset_id, raw)
+
+    def _validation_provenance(
+        self, dataset_id: int, provider_id: int | None
+    ) -> "tuple[JobRecord | None, JobRecord | None, datetime | None]":
+        """Return (run behind the listing, run in flight, when data last changed).
+
+        Reportnet publishes validation results with no timestamp or run id, and
+        does not clear them while a new run is in progress — so the only way to
+        know which run a listing describes, and whether the data has moved on
+        since, is to ask the job history.
+        """
+        try:
+            jobs = self.list_jobs(dataset_id=dataset_id, provider_id=provider_id)
+        except (AuthError, DiscoveryNotPermittedError, APIError):
+            logger.debug("job history unavailable for dataset %s", dataset_id)
+            return None, None, None
+        validations = [j for j in jobs if j.job_type == "VALIDATION"]
+        running = next((j for j in validations if j.is_running), None)
+        finished = next((j for j in validations if j.status == "FINISHED"), None)
+        imports = [
+            j.status_changed_at
+            for j in jobs
+            if j.job_type == "IMPORT" and j.status == "FINISHED" and j.status_changed_at
+        ]
+        return finished, running, max(imports) if imports else None
 
     def get_validation_results(
         self,
@@ -992,7 +1130,27 @@ class DataflowClient:
         raw = self._list_group_validations_for_backend(
             dataset_id=dataset_id, provider_id=provider_id
         )
-        return ValidationResult._from_raw(dataset_id, raw)
+        finished, running, changed = self._validation_provenance(dataset_id, provider_id)
+        result = ValidationResult._from_raw(
+            dataset_id, raw, job=finished, superseded_by=running, data_changed_at=changed
+        )
+        if running is not None:
+            logger.warning(
+                "dataset %s: validation job %s is %s, and Reportnet keeps serving the "
+                "PREVIOUS run's results meanwhile — these are from job %s, not the run "
+                "in flight. result.is_stale is True.",
+                dataset_id, running.id, running.status,
+                finished.id if finished else "an earlier run",
+            )
+        elif result.is_stale:
+            logger.warning(
+                "dataset %s: these results are from validation job %s (%s) but data was "
+                "imported at %s, after it — they describe data that is no longer there. "
+                "Re-validate before acting on them.",
+                dataset_id, finished.id if finished else "?",
+                finished.status_changed_at if finished else "?", changed,
+            )
+        return result
 
     def _list_group_validations_for_backend(
         self,
