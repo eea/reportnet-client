@@ -1,35 +1,33 @@
-# Reference datasets (custodians)
+# Reference datasets
 
-Most reporters never need this page. Reference datasets hold the shared code
-lists a dataflow uses, and only custodians can change them.
+**Reporters can skip this page.** Reference datasets hold the code lists a
+dataflow shares with everyone. You only ever read them, and
+[`get_template()`](schema.md#code-lists) does that for you.
 
-## Reading them
+The rest is for custodians, who are the only ones who can change them.
 
-Anyone can read. If you just want the valid values for a field, use
-`get_codelists()` instead — it picks the right reference dataset for you.
+## See what is there
 
 ```python
 for ref in flow.get_reference_datasets():
     print(ref.id, ref.name, "unlocked" if ref.updatable else "locked")
 ```
 
-## Writing to them
+## Change one
 
-A reference dataset is **locked** by default. An upload to a locked one is
-accepted and then fails, because the lock is checked when the job runs rather
-than when you send it.
+They are **locked** by default, and the lock is checked when the upload job
+runs — not when you send it. So an upload to a locked dataset is accepted, and
+then fails with *"Import is not allowed for this dataset."*
 
-`import_frames` handles the whole cycle — it unlocks, uploads, and locks again,
-restoring the lock even if the upload fails:
+`import_frames` handles it: unlock, upload, lock again — and it restores the
+lock even if the upload fails.
 
 ```python
 flow.import_frames(dataset_id=108960, frames={"Agglomerations": df}, replace=True)
 ```
 
-Re-locking is also what regenerates the dataset's public files, so it is not an
-optional tidy-up.
-
-To do it by hand:
+Re-locking is also what rebuilds the dataset's public files, so don't skip it if
+you do this by hand:
 
 ```python
 flow.set_reference_dataset_updatable(dataset_id=108960, updatable=True)
@@ -37,18 +35,16 @@ flow.set_reference_dataset_updatable(dataset_id=108960, updatable=True)
 flow.set_reference_dataset_updatable(dataset_id=108960, updatable=False)
 ```
 
-## What custodian keys can and cannot do
+## What a custodian key can do
 
 Measured against a live dataflow:
 
-| | Custodian key |
+| | |
 |---|---|
-| Read any dataset in the dataflow | yes |
-| Export any dataset | yes |
-| Import to a reference dataset | yes, once unlocked |
-| Import to a test dataset | yes |
-| Import to a **reporter's** dataset | **no** |
-| Import to the data collection | **no** |
+| Read and export any dataset | ✅ |
+| Import to a reference or test dataset | ✅ once unlocked |
+| Import to a **reporter's** dataset | ❌ |
+| Import to the data collection | ❌ |
 
 A reporter's data can only be uploaded with that reporter's own key. There is no
-unlock for it — it is a permission boundary, not a lock.
+unlock for it — that is a permission boundary, not a lock.
