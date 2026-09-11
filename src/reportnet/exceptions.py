@@ -67,6 +67,23 @@ class CodelistResolutionError(ReportnetError):
         super().__init__(f"{message}. {detail}".strip())
 
 
+class DataflowNotPublicError(ReportnetError):
+    """A dataflow's schema was requested publicly, but it is not published.
+
+    ``downloadPublicSchemaInformation`` serves published dataflows only, and
+    answers 404 for anything else — including a private test copy of a dataflow
+    that *is* public. There is no API-key route to the same file, so a private
+    dataflow's rules have to be exported from the web UI by hand.
+    """
+
+    def __init__(self, dataflow_id: int) -> None:
+        self.dataflow_id = dataflow_id
+        super().__init__(
+            f"Dataflow {dataflow_id} is not public, so its schema is not served here. "
+            f"Export it from the Reportnet web UI instead."
+        )
+
+
 class JobFailedError(ReportnetError):
     """A job reached a terminal non-successful status.
 

@@ -23,8 +23,9 @@ pip install "reportnet-client[dataframe] @ git+https://github.com/eea/reportnet-
 ```
 
 Not on PyPI yet. `[dataframe]` adds pandas/polars support — most people want it.
-Add `keyring` to keep your key in your computer's password manager, or `spatial`
-if your data has map geometry.
+Add `keyring` to keep your key in your computer's password manager, `spatial`
+if your data has map geometry, or `schema` to read a public dataflow's quality
+rules.
 
 ## Get an API key
 

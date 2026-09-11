@@ -62,6 +62,43 @@ Descriptive data -> Italy 108953
 contain it — the ids appear only inside the rule SQL — and design ids change
 between dataflows, so no rule is portable without remapping them.
 
+## Reading the quality rules
+
+If the dataflow is **public**, its whole design — including every QC rule and
+its SQL — is downloadable with no API key at all:
+
+```python
+import reportnet
+
+schema = reportnet.get_public_schema(1748)
+print(len(schema.rules), "rules,", len(schema.sql_rules()), "with SQL")
+
+for rule in schema.sql_rules():
+    print(rule.shortcode, rule.severity, rule.dataset_ids)
+```
+
+```
+815 rules, 176 with SQL
+ReportPeriod-4 WARNING (98701,)
+UWWTPs-31 ERROR (98701, 98699)
+```
+
+`rule.dataset_ids` are the **design** dataset ids in the rule's SQL — pair them
+with `get_design_datasets()` to see which dataset each one means. 35 of those
+rules read more than one dataset, and those are the ones you cannot understand
+without that mapping.
+
+Needs the `schema` extra (`pip install "reportnet-client[schema]"`), or pass
+`parse=False` to just keep the spreadsheet.
+
+**This is the only programmatic way to read rule SQL.** The `/rules/` endpoints
+refuse an API key of any role, custodian included — measured, not assumed. And
+it only works for published dataflows: a private one, including a private test
+copy of a public dataflow, raises `DataflowNotPublicError`.
+
+Writing rules is still web-UI only. `createNewRule` and `updateRule` exist in
+Reportnet's source but are not reachable with an API key.
+
 ## Reference data and code lists
 
 See [reference datasets](reference-datasets.md). The short version: they are

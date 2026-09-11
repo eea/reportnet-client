@@ -29,6 +29,7 @@ most people want it. Two others you can add if you need them:
 |---|---|
 | `keyring` | keep your API key in your computer's password manager |
 | `spatial` | your data has map geometry (shapes, points) |
+| `schema` | read a public dataflow's quality rules |
 
 ## Your first upload
 
