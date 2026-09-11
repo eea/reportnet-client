@@ -29,6 +29,7 @@ from .models import (
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
+    DesignDataset,
     ExportResult,
     JobRecord,
     OperationEvidence,
@@ -394,6 +395,33 @@ class DataflowClient:
             codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=ref_ds[0].id)
         """
         return list(self.get_dataflow_contents().reference_datasets)
+
+    def get_design_datasets(self) -> list[DesignDataset]:
+        """Return the dataflow's design datasets (custodian view).
+
+        A design dataset is the schema as the custodian built it. Its id is what
+        quality-control rule SQL addresses — ``dataset_<id>."table"`` — and
+        Reportnet resolves that at validation time to whichever instance of the
+        same ``schema_id`` is in scope.
+
+        So this is the lookup you need to read or write QC rules: the id in a
+        rule means nothing without it, and a schema export does not contain the
+        mapping (the numbers appear only inside the SQL text).
+
+        Requires a custodian-level key.
+
+        Example::
+
+            for d in flow.get_design_datasets():
+                print(d.id, d.name)          # 108946 Descriptive data
+
+            # pair a design dataset with the reporting datasets it governs
+            contents = flow.get_dataflow_contents()
+            by_schema = {d.schema_id: d for d in contents.design_datasets}
+            for r in contents.reporting_datasets:
+                print(r.name, "->", by_schema[r.schema_id].name)
+        """
+        return list(self.get_dataflow_contents().design_datasets)
 
     def get_test_datasets(self) -> list[TestDataset]:
         """Return all test datasets for this dataflow.

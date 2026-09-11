@@ -32,6 +32,7 @@ __all__ = [
     "DataflowContents",
     "Capabilities",
     "DataCollection",
+    "DesignDataset",
     "EuDataset",
     "Reporter",
     "ReportingDataset",
@@ -191,6 +192,36 @@ class TestDataset:
 
 
 @dataclass(frozen=True)
+class DesignDataset:
+    """A dataset as the custodian designed it, before any reporter fills it in.
+
+    Returned inside ``designDatasets`` by GET /dataflow/v1/{dataflowId}.
+
+    Design datasets are how **quality-control rules address data**: rule SQL is
+    written as ``dataset_<id>."table"`` where ``<id>`` is the design dataset's
+    id — never a reporting, reference or data-collection id. At validation time
+    Reportnet resolves it to whichever instance of the same
+    :attr:`schema_id` is in scope: the reporter's own dataset when validating a
+    submission, the reference dataset for a reference schema.
+
+    That makes :attr:`schema_id` the join key across every copy of a schema —
+    design, reporting, data collection, EU and test all share it.
+    """
+
+    id: int
+    name: str        # dataSetName — e.g. "Descriptive data"
+    schema_id: str   # datasetSchema — shared with every instance of this schema
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "DesignDataset":
+        return cls(
+            id=int(d["id"]),
+            name=d.get("dataSetName") or "",
+            schema_id=d.get("datasetSchema") or "",
+        )
+
+
+@dataclass(frozen=True)
 class DataCollection:
     """An all-country dataset holding every reporter's *released* data.
 
@@ -278,6 +309,7 @@ class DataflowContents:
     test_datasets: tuple[TestDataset, ...]
     data_collections: tuple[DataCollection, ...] = ()
     eu_datasets: tuple[EuDataset, ...] = ()
+    design_datasets: tuple[DesignDataset, ...] = ()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "DataflowContents":
@@ -294,6 +326,9 @@ class DataflowContents:
                 DataCollection.from_dict(x) for x in d.get("dataCollections") or []
             ),
             eu_datasets=tuple(EuDataset.from_dict(x) for x in d.get("euDatasets") or []),
+            design_datasets=tuple(
+                DesignDataset.from_dict(x) for x in d.get("designDatasets") or []
+            ),
         )
 
 

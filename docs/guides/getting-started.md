@@ -12,7 +12,8 @@ choose **Generate new API-key**. Copy it somewhere safe.
 Reportnet has two kinds of user:
 
 - a **reporter** submits data for one country or organisation
-- a **custodian** runs the dataflow
+- a **custodian** builds and administers the dataflow — designs the tables and
+  fields, writes the quality rules, and manages the shared code lists
 
 A key made while you were acting as a custodian is a *custodian key*. It cannot
 upload report data — even if the very same person is also a reporter for that

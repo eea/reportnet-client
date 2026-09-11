@@ -7,6 +7,11 @@ If you report environmental data to the European Environment Agency, this
 library lets you **look** at what is expected, **upload** your data, **check** it
 against Reportnet's quality rules, and **download** it again.
 
+If you **run** a dataflow, it covers the admin side as well — design datasets and
+the ids quality rules are written against, reference data and code lists, job
+history, and deletion. See
+[for custodians](https://eea.github.io/reportnet-client/guides/custodians/).
+
 📖 **[Full documentation](https://eea.github.io/reportnet-client/)**
 
 > **Beta.** Some names may still change before version 1.0.

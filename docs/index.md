@@ -73,6 +73,13 @@ There is also a **[notebook](notebooks.md)** that walks the whole thing
 end-to-end with real data, and an [API reference](api/client.md) if you want
 the exact signatures.
 
+## Running a dataflow?
+
+If you are a **custodian** — you build the dataflow, write its quality rules and
+manage its code lists — see **[for custodians](guides/custodians.md)**. The
+library covers the admin side too: reading the whole dataflow, design datasets
+and what QC rule ids mean, reference data, job history and deletion.
+
 ## A note on how long things take
 
 Uploads take seconds per table. **Validation can take twenty minutes** on a
