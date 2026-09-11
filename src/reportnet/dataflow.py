@@ -880,7 +880,7 @@ class DataflowClient:
                 fields, from :meth:`get_codelists` or the custodian. Not
                 fetched automatically — ``get_codelists()`` runs a full
                 reference export job, which is minutes of latency for a result
-                that is empty on some dataflows (see ``docs/live-tests-2003.md``).
+                that is empty on some dataflows (see ``notes/live-tests-2003.md``).
             strict_codelists: What to do when *codelists* does not cover a
                 LINK / CODELIST field. ``False`` (the default, matching
                 :meth:`get_codelists` and :meth:`get_template`) warns and logs,

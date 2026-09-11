@@ -2,7 +2,7 @@
 
 Reportnet grants permissions per key role and has no endpoint that reports the
 role, so the library probes. This matters because the role changes how requests
-must be *built*, not just what succeeds — see docs/api-notes.md.
+must be *built*, not just what succeeds — see notes/api-notes.md.
 """
 import httpx
 import pytest

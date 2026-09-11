@@ -1,0 +1,90 @@
+{
+ "idDataset": 108952,
+ "idDatasetSchema": "6a450429bde8560001232ac6",
+ "nameDataSetSchema": null,
+ "errors": [
+  {
+   "message": "Value of the overall sludge production is NOT equal to sum of amount of sludge disposed via reported modes of sludge disposal and/or reuse",
+   "idRule": null,
+   "levelError": "ERROR",
+   "typeEntity": "FIELD",
+   "numberOfRecords": "1",
+   "nameTableSchema": "MSLevel",
+   "shortCode": "MSLevel-3",
+   "nameFieldSchema": "mslSludgeProduction"
+  },
+  {
+   "message": "The value must not be missing or empty",
+   "idRule": null,
+   "levelError": "BLOCKER",
+   "typeEntity": "FIELD",
+   "numberOfRecords": "1",
+   "nameTableSchema": "ReportPeriod",
+   "shortCode": "ReportPeriod-1-repReferenceSystem",
+   "nameFieldSchema": "repReferenceSystem"
+  },
+  {
+   "message": "Mandatory table has no records",
+   "idRule": null,
+   "levelError": "BLOCKER",
+   "typeEntity": "TABLE",
+   "numberOfRecords": "1",
+   "nameTableSchema": "Reporter",
+   "shortCode": "TB461",
+   "nameFieldSchema": ""
+  },
+  {
+   "message": "Mandatory table has no records",
+   "idRule": null,
+   "levelError": "BLOCKER",
+   "typeEntity": "TABLE",
+   "numberOfRecords": "1",
+   "nameTableSchema": "Contacts",
+   "shortCode": "TB463",
+   "nameFieldSchema": ""
+  },
+  {
+   "message": "The value is not a valid member of the referenced list.",
+   "idRule": null,
+   "levelError": "ERROR",
+   "typeEntity": "FIELD",
+   "numberOfRecords": "15",
+   "nameTableSchema": "DischargePoints",
+   "shortCode": "TC518",
+   "nameFieldSchema": "dcpState"
+  },
+  {
+   "message": "The value is not a valid member of the referenced list.",
+   "idRule": null,
+   "levelError": "ERROR",
+   "typeEntity": "FIELD",
+   "numberOfRecords": "2",
+   "nameTableSchema": "DischargePoints",
+   "shortCode": "TC529",
+   "nameFieldSchema": "dcpGroundWater"
+  },
+  {
+   "message": "Some of the treatment plants reported as PASSED are potentionally overloaded",
+   "idRule": null,
+   "levelError": "WARNING",
+   "typeEntity": "RECORD",
+   "numberOfRecords": "14",
+   "nameTableSchema": "UWWTPs",
+   "shortCode": "UWWTPs-19",
+   "nameFieldSchema": ""
+  },
+  {
+   "message": "Some of the treatment plants with capacity over 100 000 pE is missing the information on the code used in the E-PRTR",
+   "idRule": null,
+   "levelError": "ERROR",
+   "typeEntity": "RECORD",
+   "numberOfRecords": "15",
+   "nameTableSchema": "UWWTPs",
+   "shortCode": "UWWTPs-31",
+   "nameFieldSchema": ""
+  }
+ ],
+ "totalRecords": 69,
+ "totalErrors": 50,
+ "totalFilteredRecords": 8
+}

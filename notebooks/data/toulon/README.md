@@ -49,11 +49,13 @@ Reported source tables, named and shaped exactly as in `data_input/`:
 | `MSLevel` | 1 |
 
 Each is written as both `.parquet` (types preserved, what the pipeline loads) and `.csv`
-(for inspection). Nothing else is kept here — the directory holds reported source tables
-only, no derived or computed output.
+(for inspection). No derived or computed output is kept here — these are reported source
+tables only.
 
-`ProtectedArea` is not included — it is not an input to `run_compliance()` and has no key
-linking it to this subset.
+`ProtectedArea` is not among them: it is not an input to `run_compliance()`. It does,
+however, have a key into this subset — `rcaCode` matches its `thematicIdIdentifier`,
+which is what the dataflow's `Cross01` check joins on — so the matching geometries live
+alongside in [`spatial/`](spatial/README.md), as a GeoPackage covering the same 25 km.
 
 ## The agglomerations
 

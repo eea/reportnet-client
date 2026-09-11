@@ -41,29 +41,23 @@ plugins:
 
 nav:
   - Home: index.md
-  - Concepts: concepts.md
-  - Reporter guide:
-    - Workflow: guides/workflows.md
-    - Permissions: guides/capabilities.md
-    - Export data: guides/export.md
-    - Dataset schema: guides/schema.md
-    - Import data: guides/import.md
-    - Validate a dataset: guides/validation.md
-    - Provider helpers: guides/providers.md
-    - Logging: guides/logging.md
-  - Custodian (admin):
-    - Workflows and QC authoring: guides/workflows.md
-    - Reference datasets: guides/reference-datasets.md
-  - API notes: api-notes.md
-  - Live tests (2003): live-tests-2003.md
+  - How Reportnet is organised: concepts.md
+  - Guides:
+    - Getting started: guides/getting-started.md
+    - What Reportnet expects: guides/schema.md
+    - Uploading: guides/import.md
+    - Checking your data: guides/validation.md
+    - Downloading: guides/export.md
+    - When something goes wrong: guides/troubleshooting.md
+  - Notebook: notebooks.md
+  - For custodians: guides/reference-datasets.md
   - Changelog: changelog.md
-  - Notebooks: notebooks.md
-  - API Reference:
-    - ReportnetClient: api/client.md
-    - DataflowClient: api/dataflow-client.md
+  - API reference:
+    - Client: api/client.md
+    - Dataflow: api/dataflow-client.md
     - Jobs: api/jobs.md
-    - Models: api/models.md
-    - Exceptions: api/exceptions.md
-    - Provider helpers: api/providers.md
+    - Data types: api/models.md
+    - Errors: api/exceptions.md
+    - Country codes: api/providers.md
     - Key storage: api/keychain.md
-    - Interactive & visualisation: api/interactive.md
+    - Display helpers: api/interactive.md

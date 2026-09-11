@@ -49,9 +49,7 @@ jobs:
               '',
               '| File | Contents |',
               '|---|---|',
-              '| `01_explore_dataflow.html` | Browse reporters, schemas, dataflow structure |',
-              '| `02_import_export_pipeline.html` | End-to-end import → validate → export |',
-              '| `03_spatial_geodataframe.html` | Spatial data → GeoDataFrame |',
+              '| `01_reporter_workflow.html` | Connect, upload the Toulon subset, validate |',
             ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({

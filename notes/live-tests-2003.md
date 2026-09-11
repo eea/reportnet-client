@@ -46,7 +46,7 @@ or gateway policy. Source code presence is not proof of deploy-time access.
 
 `capabilities()` remains a request-scoping inference, not a complete operation
 permission matrix. Separate reporter/custodian clients and provider scope are
-covered in the [workflow guide](guides/workflows.md).
+covered in the the reporter guides under `docs/guides/`.
 
 ## v4 versus v5: measured results
 

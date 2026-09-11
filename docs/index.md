@@ -1,103 +1,92 @@
 # reportnet-client
 
-Python client for the [EEA Reportnet 3 REST API](https://help.reportnet.europa.eu/rest-api/).
+Send your country's data to [Reportnet 3](https://reportnet.europa.eu) from
+Python, instead of clicking through the website.
 
-Fully type-annotated and ships a [PEP 561](https://peps.python.org/pep-0561/)
-marker, so `mypy` and `pyright` check your calls against it.
+If you report data to the European Environment Agency — water, waste water, air,
+nature — this library does the four things you need:
 
-!!! warning "Beta"
-    The API may still change before 1.0.
+| | |
+|---|---|
+| **Look** | see which datasets are yours and what shape the data must be |
+| **Upload** | send a spreadsheet, a CSV, or a DataFrame |
+| **Check** | run Reportnet's quality rules and read what came back |
+| **Download** | get data back out again |
 
-## Installation
+Releasing your report is still done by a person on the Reportnet website. There
+is no API for it, on purpose.
 
-Not yet published to PyPI. Install from GitHub:
-
-```bash
-pip install git+https://github.com/eea/reportnet-client.git
-```
-
-Optional extras (combine as needed, e.g. `[dataframe,keyring]`):
-
-| Extra | Adds | For |
-|---|---|---|
-| `dataframe` | narwhals, polars | DataFrame import/export, typed templates |
-| `keyring` | keyring | API keys in the OS keychain |
-| `spatial` | geopandas | Geometry columns as GeoDataFrames |
+## Install
 
 ```bash
-pip install "reportnet-client[dataframe,keyring] @ git+https://github.com/eea/reportnet-client.git"
+pip install "reportnet-client[dataframe] @ git+https://github.com/eea/reportnet-client.git"
 ```
 
-## Quick start
+Not on PyPI yet. `[dataframe]` lets you work with tables in pandas or polars —
+most people want it. Two others you can add if you need them:
+
+| Add | When you need it |
+|---|---|
+| `keyring` | keep your API key in your computer's password manager |
+| `spatial` | your data has map geometry (shapes, points) |
+
+## Your first upload
+
+You need an **API key**. Get one from the Reportnet website: open your dataflow,
+click the settings wheel, then **Generate new API-key**.
 
 ```python
 import reportnet
 
-client = reportnet.ReportnetClient(api_key="your-api-key")
+# Connect, and say which country you are reporting for
+flow = reportnet.ReportnetClient(api_key="your-key").for_dataflow(2003)
+me = flow.find_reporter("FR")
 
-# Scope to a dataflow and reporter
-flow = client.for_dataflow(1619)
-ie = flow.find_reporter("IE")
+# Which datasets are mine?
+for d in me.get_reporting_datasets():
+    print(d.id, d.table_name)
 
-# Look up a dataset by table name (requires administrator permissions)
-ds = ie.dataset("Table1a")
+# Upload a table
+me.import_frames(dataset_id=108952, frames={"Agglomerations": my_dataframe})
 
-# Upload, then download
-ie.import_file(dataset_id=ds.id, file="ireland.csv").wait()
-frames = ie.etl_export(dataset_id=ds.id).to_frames()
+# Check it
+result = me.validate(dataset_id=108952)
+print(result.summary())
 ```
 
-## Roles
-
-Two key roles exist. Reporters submit data for one country or organisation.
-Custodians administer a dataflow. Permissions differ between them and determine
-which operations succeed. These guides are written for reporters; custodian
-material is grouped separately.
+That is the whole loop. The guides below explain each step, and what to do when
+Reportnet disagrees with you.
 
 ## Guides
 
-Ordered by the sequence in which they are used:
+Read these in order the first time.
 
-1. [Permissions](guides/capabilities.md). The key's role determines which
-   operations are available, including why reporters take dataset identifiers
-   from the web interface.
-2. [Dataset schema](guides/schema.md). Tables, fields, code lists, and typed
-   DataFrame templates.
-3. [Import data](guides/import.md). Uploading a file, DataFrame, DuckDB
-   relation or GeoDataFrame.
-4. [Validate a dataset](guides/validation.md). Running Reportnet's validation
-   rules and reading the results.
-5. Release. Not available through the API; see
-   [API notes](api-notes.md#there-is-no-release-endpoint). It must be performed
-   in the web interface.
+1. **[Getting started](guides/getting-started.md)** — your key, connecting, and
+   the one thing that confuses everybody
+2. **[What Reportnet expects](guides/schema.md)** — tables, fields, and code lists
+3. **[Uploading](guides/import.md)** — getting your data in
+4. **[Checking your data](guides/validation.md)** — validation and its results
+5. **[Downloading](guides/export.md)** — getting data back out
+6. **[When something goes wrong](guides/troubleshooting.md)** — errors, in plain words
 
-Custodian-only material: [Export data](guides/export.md) and
-[Reference datasets](guides/reference-datasets.md).
+There is also a **[notebook](notebooks.md)** that walks the whole thing
+end-to-end with real data, and an [API reference](api/client.md) if you want
+the exact signatures.
 
-## Secure key storage
+## A note on how long things take
 
-Store API keys in the OS keychain (macOS Keychain, Windows Credential Manager,
-libsecret) so they never appear in source code:
+Uploads take seconds per table. **Validation can take twenty minutes** on a
+large dataflow — that is Reportnet, not this library. Start it, go away, come
+back. Never start a second validation while one is running; Reportnet refuses it
+and shows an error on your dataflow.
+
+## Keeping your key out of your code
 
 ```python
 import reportnet
 
-# Production and sandbox keys are stored separately
-reportnet.save_key(dataflow_id=1619, api_key="your-api-key")
-
-# Load at runtime
-client = reportnet.ReportnetClient.from_keyring(dataflow_id=1619)
+reportnet.save_key(dataflow_id=2003, api_key="your-key")   # once
+client = reportnet.ReportnetClient.from_keyring(dataflow_id=2003)   # ever after
 ```
 
-Requires the `keyring` extra.
-
-## Notes
-
-Code lists are held in reference datasets. A dataflow may define several, and
-only one contains the values for any given field.
-[`get_template()`](guides/schema.md) selects it by schema coverage and warns
-when resolution is incomplete. `strict=True` raises instead.
-
-Imports, exports and validations are asynchronous and return a
-[`JobHandle`](api/jobs.md). See [Logging](guides/logging.md) for progress
-output.
+Needs the `keyring` extra. It uses your operating system's own password store.
