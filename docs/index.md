@@ -29,6 +29,7 @@ most people want it. Two others you can add if you need them:
 |---|---|
 | `keyring` | keep your API key in your computer's password manager |
 | `spatial` | your data has map geometry (shapes, points) |
+| `schema` | read a public dataflow's quality rules |
 
 ## Your first upload
 
@@ -72,6 +73,13 @@ Read these in order the first time.
 There is also a **[notebook](notebooks.md)** that walks the whole thing
 end-to-end with real data, and an [API reference](api/client.md) if you want
 the exact signatures.
+
+## Running a dataflow?
+
+If you are a **custodian** — you build the dataflow, write its quality rules and
+manage its code lists — see **[for custodians](guides/custodians.md)**. The
+library covers the admin side too: reading the whole dataflow, design datasets
+and what QC rule ids mean, reference data, job history and deletion.
 
 ## A note on how long things take
 

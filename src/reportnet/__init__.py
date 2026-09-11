@@ -8,6 +8,7 @@ from .exceptions import (
     APIError,
     AuthError,
     CodelistResolutionError,
+    DataflowNotPublicError,
     DatasetLockedError,
     DiscoveryNotPermittedError,
     ExportVerificationError,
@@ -26,6 +27,7 @@ from .models import (
     DataflowContents,
     DataflowInfo,
     DatasetSchema,
+    DesignDataset,
     EuDataset,
     ExportResult,
     ExportVerification,
@@ -43,6 +45,11 @@ from .models import (
     ValidationResult,
 )
 from .providers import PROVIDERS, DataProvider, by_country, by_group, by_id
+from .public_schema import (
+    PublicSchema,
+    QcRule,
+    get_public_schema,
+)
 from .viz import dataflow_to_mermaid
 
 try:
@@ -75,6 +82,11 @@ __all__ = [
     "ReferenceDataset",
     "TestDataset",
     "DataCollection",
+    "DataflowNotPublicError",
+    "DesignDataset",
+    "PublicSchema",
+    "QcRule",
+    "get_public_schema",
     "EuDataset",
     "DatasetSchema",
     "TableSchema",

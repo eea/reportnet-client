@@ -64,8 +64,11 @@ Dataflow  (the obligation — 2003)
 
 ## Two kinds of user
 
-A **reporter** submits data for one country. A **custodian** runs the dataflow —
-designs the schema, writes the quality rules, manages the reference data.
+A **reporter** submits data for one country or organisation.
+
+A **custodian** is the dataflow's administrator *and* its developer. They design
+the tables and fields, write the quality rules that check your data, and manage
+the shared code lists. When a rule looks wrong, a custodian is who you ask.
 
 This matters more than it sounds, because **your API key is one or the other**,
 and a custodian key cannot upload report data. See

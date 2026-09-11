@@ -38,6 +38,7 @@ Issues = "https://github.com/eea/reportnet-client/issues"
 dataframe = ["narwhals>=1.0", "polars>=0.20"]
 keyring = ["keyring>=24"]
 spatial = ["geopandas>=0.14"]
+schema = ["openpyxl>=3.1"]
 
 [dependency-groups]
 dev = [

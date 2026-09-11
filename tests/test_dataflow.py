@@ -663,3 +663,61 @@ def test_collections_are_frozen():
     collection = DataCollection.from_dict({"id": 1})
     with pytest.raises(dataclasses.FrozenInstanceError):
         collection.id = 2  # type: ignore[misc]
+
+
+# ── Design datasets: how QC rules address data ────────────────────────────────
+#
+# A QC rule's SQL says dataset_<id>."table", and <id> is always a DESIGN dataset
+# — never a reporting, reference or data-collection id. Reportnet resolves it at
+# validation time to whichever instance shares the schema_id. Without this
+# lookup a rule's id is unreadable, and a schema export does not carry the
+# mapping: the numbers appear only inside the SQL text.
+
+DATAFLOW_WITH_DESIGN = {
+    "id": 2003,
+    "designDatasets": [
+        {"id": 108946, "dataSetName": "Descriptive data", "datasetSchema": "schemaA"},
+        {"id": 108944, "dataSetName": "Spatial data", "datasetSchema": "schemaB"},
+    ],
+    "reportingDatasets": [
+        {"id": 108952, "dataProviderId": 56, "dataSetName": "France",
+         "datasetSchema": "schemaA", "nameDatasetSchema": "Descriptive data"},
+    ],
+}
+
+
+def test_design_datasets_are_parsed(mock_router, client):
+    mock_router.get("/dataflow/v1/2003").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_WITH_DESIGN)
+    )
+    designs = client.for_dataflow(2003).get_design_datasets()
+    assert [d.id for d in designs] == [108946, 108944]
+    assert designs[0].name == "Descriptive data"
+    assert designs[0].schema_id == "schemaA"
+
+
+def test_schema_id_joins_a_design_dataset_to_its_reporting_datasets(mock_router, client):
+    """The schema id is the join key across every copy of a schema, which is how
+    a rule written against design 108946 reaches France's dataset 108952."""
+    mock_router.get("/dataflow/v1/2003").mock(
+        return_value=httpx.Response(200, json=DATAFLOW_WITH_DESIGN)
+    )
+    contents = client.for_dataflow(2003).get_dataflow_contents()
+    by_schema = {d.schema_id: d for d in contents.design_datasets}
+    reporting = contents.reporting_datasets[0]
+    assert by_schema[reporting.schema_id].id == 108946
+
+
+def test_absent_design_datasets_default_to_empty(mock_router, client):
+    mock_router.get("/dataflow/v1/2003").mock(
+        return_value=httpx.Response(200, json={"id": 2003})
+    )
+    assert client.for_dataflow(2003).get_design_datasets() == []
+
+
+def test_design_datasets_are_frozen():
+    from reportnet import DesignDataset
+
+    d = DesignDataset.from_dict({"id": 1, "dataSetName": "x", "datasetSchema": "s"})
+    with pytest.raises(Exception):
+        d.id = 2
