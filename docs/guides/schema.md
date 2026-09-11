@@ -1,176 +1,85 @@
-# Dataset schema
+# What Reportnet expects
 
-The `get_schema()` method returns the full table and field definitions for a
-dataset. Use it to discover column names, types, and which fields are required
-before building an import CSV.
+Before you upload anything, it helps to see the shape Reportnet wants.
 
-## Retrieve a schema
+## Tables and fields
 
 ```python
-flow = client.for_dataflow(1619)
+schema = me.get_schema(dataset_id=108952)
 
-schema = flow.get_schema(dataset_id=93953)
-# DatasetSchema(id="...", name="...", tables=(...))
-```
-
-## Explore tables and fields
-
-```python
 for table in schema.tables:
-    print(f"\n{table.name}")
-    print(f"  required: {table.required_columns()}")
-    print(f"  all:      {table.column_names()}")
+    print(table.name, len(table.fields), "fields")
 ```
 
-Example output:
-
 ```
-Table1a
-  required: ['category', 'scenario', 'ry', 'cyear', 'gas']
-  all:      ['category', 'scenario', 'ry', 'cyear', 'gas', 'cvalue', 'notation', 'inventorySubmissionYear']
+ReportPeriod 6 fields
+Agglomerations 44 fields
+UWWTPs 67 fields
+...
 ```
 
-## Look up a specific table
+For one table:
 
 ```python
-table = schema.table("Table1a")   # raises KeyError if not found
+table = schema.table("Agglomerations")
 
 for field in table.fields:
-    print(field.name, field.type, "required" if field.required else "")
+    print(field.name, field.type.value, "required" if field.required else "")
 ```
 
-```
-category   FieldType.LINK            required
-scenario   FieldType.LINK            required
-ry         FieldType.LINK            required
-cyear      FieldType.NUMBER_INTEGER  required
-gas        FieldType.LINK            required
-cvalue     FieldType.NUMBER_DECIMAL
-notation   FieldType.LINK
-```
+Field types are things like `TEXT`, `NUMBER_INTEGER`, `DATE`, and `CODELIST`.
 
-## FieldType values
+## Required fields
 
-| Value | Meaning |
-|-------|---------|
-| `TEXT` | Free text |
-| `NUMBER_INTEGER` | Whole number |
-| `NUMBER_DECIMAL` | Decimal number |
-| `DATE` | Date (ISO 8601) |
-| `DATETIME` | Date + time |
-| `BOOLEAN` | True / False |
-| `CODELIST` | Single value from a fixed list |
-| `MULTISELECT_CODELIST` | Multiple values from a fixed list |
-| `LINK` | Reference to a value in a reference dataset |
-| `MULTISELECT_LINK` | Multiple references |
-| `ATTACHMENT` | File attachment |
-
-Unknown types pass through as opaque strings so the client doesn't break
-when the API adds new types.
-
-## LINK fields — resolving valid values
-
-`LINK` fields store references to a column in a **reference dataset**. Each such field
-exposes the source metadata:
+Some fields must have a value. Missing ones will not stop the upload — they fail
+later, during validation, which is a slower way to find out:
 
 ```python
-for field in table.fields:
-    if field.referenced_schema_id:
-        print(
-            f"{field.name} → "
-            f"schema {field.referenced_schema_id}, "
-            f"pk field {field.referenced_pk_id}"
-        )
-# category → schema 68dd410245f9450001260d45, pk field 68dd418645f9450001260d6e
-# scenario → schema 68dd410245f9450001260d45, pk field 68dd419a45f9450001260d7a
+print(table.required_columns())
 ```
 
-Use `get_codelists()` to export the reference dataset and resolve the valid values
-in one call. The result maps field name → sorted list of valid strings:
+```
+['aggState', 'repCode', 'aggCode', 'aggName', 'aggGenerated', ...]
+```
+
+## Code lists
+
+A `CODELIST` or `LINK` field only accepts values from a fixed list. Uploading
+anything else is an error.
+
+Reportnet keeps these lists in separate "reference datasets", and a dataflow can
+have several. The easiest way to get blank tables with the lists already applied
+is `get_template()`, which finds the right reference dataset for you:
 
 ```python
-codelists = flow.get_codelists(dataset_id=93953, ref_dataset_id=REF_DATASET_ID)
-# {"category": ["Total excluding LULUCF", "Total including LULUCF"],
-#  "scenario": ["WAM", "WEM", "WOM"],
-#  "ry": ["0", "1"]}
+template = me.get_template(dataset_id=108952)
+frame = template["Agglomerations"]      # empty, correct columns and types
 ```
 
-!!! warning "Pick the right reference dataset"
-    A dataflow often has several reference datasets, and a LINK field only
-    resolves from the one holding its lookup table. On dataflow 2003, the first
-    reference dataset covers **none** of the spatial dataset's 10 LINK fields —
-    the third covers all of them.
+Fill that in and upload it — no guessing at column names.
 
-    If the one you pass can't resolve every field, `get_codelists()` warns and
-    tells you which fields were left unconstrained. Pass `strict=True` to raise
-    [`CodelistResolutionError`][reportnet.CodelistResolutionError] instead, or
-    let [`get_template()`](#get-an-empty-dataframe-with-correct-types) choose
-    the reference dataset for you — it compares schemas and picks the one that
-    actually covers your fields.
-
-    ```python
-    # Fails loudly rather than returning a mapping that constrains nothing
-    codelists = flow.get_codelists(
-        dataset_id=93953, ref_dataset_id=REF_DATASET_ID, strict=True
-    )
-    ```
-
-Pass `codelists` to `to_frame()` so LINK columns become `pl.Enum` (polars) or
-`CategoricalDtype` (pandas) — invalid values are rejected at assignment time:
+If you know which reference dataset holds the lists, you can ask for the values
+directly:
 
 ```python
-frame = table.to_frame(codelists=codelists)
-print(frame.schema)
-# {'category': Enum(categories=['Total excluding LULUCF', 'Total including LULUCF']),
-#  'scenario': Enum(categories=['WAM', 'WEM', 'WOM']),
-#  'cyear': Int64, 'cvalue': Float64, ...}
+codelists = me.get_codelists(dataset_id=108952, ref_dataset_id=108962)
+print(codelists["aggState"])        # ['0', '1', ...]
 ```
 
-## Get an empty DataFrame with correct types
+## Check before you upload
 
-Returns an empty polars (or pandas) DataFrame whose column names and dtypes
-match the table schema. Useful for building import data programmatically.
+If you built your table some other way, compare it against the schema first:
 
 ```python
-table = schema.table("Table1a")
-frame = table.to_frame()
-# shape: (0, 8)  — zero rows, correct columns and types
-print(frame.schema)
-# {'category': String, 'scenario': String, 'ry': String,
-#  'cyear': Int64, 'gas': String, 'cvalue': Float64, ...}
-
-# Get all tables at once (optionally with codelists)
-frames = schema.to_frames(codelists=codelists)
-# {"Table1a": <empty DataFrame with Enum columns>, ...}
+problems = table.validate_frame(my_frame, codelists=codelists)
+for p in problems:
+    print(p)
 ```
 
-You can then populate it and pass it straight to `import_file()`:
+This is a local check — no network, no waiting. It catches missing required
+columns and invalid code-list values, which are the two most common reasons an
+upload is rejected.
 
-```python
-import polars as pl
+## Next
 
-empty = schema.table("Table1a").to_frame()
-data = pl.concat([empty, pl.DataFrame({
-    "category": ["Total including LULUCF"],
-    "scenario": ["WEM"],
-    "ry": ["0"],
-    "cyear": [2024],
-    "gas": ["CO2"],
-    "cvalue": [1234.5],
-    "notation": ["NA"],
-    "inventorySubmissionYear": [2024],
-})])
-ie.import_file(dataset_id=93953, file=data, table_schema_id="68dd41f0...")
-```
-
-## Generate a template CSV header
-
-```python
-table = schema.table("Table1a")
-header = "|".join(table.column_names())   # pipe-delimited
-print(header)
-# category|scenario|ry|cyear|gas|cvalue|notation|inventorySubmissionYear
-```
-
-!!! warning
-    Never include a `record_id` column — Reportnet assigns it on ingestion.
+[Uploading](import.md).

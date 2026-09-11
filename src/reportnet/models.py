@@ -9,6 +9,7 @@ a live HTTP session; it is re-exported here for backwards compatibility.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -550,6 +551,25 @@ class TableSchema:
         from ._util import cast_frame as _cast_frame
         return _cast_frame(self, frame, codelists=codelists)
 
+    def align_frame(self, frame: object) -> NativeFrame:
+        """Return *frame* reshaped to exactly this table's columns, in schema order.
+
+        Reportnet rejects any import whose header is not exactly the field list,
+        so a frame missing a column the source never had is refused just like a
+        typo. This adds absent fields as empty, drops columns the schema does
+        not define, reorders the rest, and renders DATE fields as YYYY-MM-DD.
+
+        :meth:`~reportnet.DataflowClient.import_frames` applies this for you;
+        call it directly only when building a file to upload by another route.
+
+        Example::
+
+            frame = schema.table("Agglomerations").align_frame(raw)
+        """
+        from ._util import align_frame as _align_frame
+        aligned, _added, _dropped = _align_frame(self, frame)
+        return aligned
+
     def to_frame(self, *, codelists: dict[str, list[str]] | None = None) -> NativeFrame:
         """Return an empty DataFrame with columns and types matching this table.
 
@@ -633,6 +653,49 @@ class ValidationIssue:
     short_code: str | None   # rule identifier, e.g. "RY_CHECK"
 
 
+@dataclass(frozen=True)
+class JobRecord:
+    """One entry from ``GET /orchestrator/jobs`` — a job's status and timing.
+
+    This is the only way to tell *which run* a validation listing describes.
+    The listing endpoint returns no timestamp, run id or snapshot id, so a
+    stale read is indistinguishable from a fresh one by content alone —
+    identical numbers from changed data look exactly like a correct result.
+
+    ``info`` is the same field :class:`~reportnet.JobFailedError` surfaces.
+    """
+
+    id: int
+    job_type: str          # IMPORT | VALIDATION | EXPORT | RELEASE | …
+    status: str            # QUEUED | IN_PROGRESS | FINISHED | CANCELED | …
+    dataset_id: int | None
+    added_at: datetime | None
+    status_changed_at: datetime | None
+    info: str | None
+
+    @property
+    def is_running(self) -> bool:
+        """True while the job could still change the published results."""
+        return self.status in ("QUEUED", "IN_PROGRESS")
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "JobRecord":
+        def when(value: object) -> datetime | None:
+            if not isinstance(value, (int, float)) or not value:
+                return None
+            return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+
+        return cls(
+            id=int(d["id"]),
+            job_type=str(d.get("jobType") or ""),
+            status=str(d.get("jobStatus") or ""),
+            dataset_id=int(d["datasetId"]) if d.get("datasetId") is not None else None,
+            added_at=when(d.get("dateAdded")),
+            status_changed_at=when(d.get("dateStatusChanged")),
+            info=str(d["jobInfo"]) if d.get("jobInfo") else None,
+        )
+
+
 @dataclass
 class ValidationResult:
     """Parsed result of a validation run returned by DataflowClient.validate().
@@ -657,6 +720,34 @@ class ValidationResult:
     dataset_id: int
     issues: list[ValidationIssue]
     raw: dict[str, Any]
+    job: JobRecord | None = None
+    superseded_by: JobRecord | None = None
+    data_changed_at: "datetime | None" = None
+
+    @property
+    def is_stale(self) -> bool:
+        """True when these results do not describe the data currently in the dataset.
+
+        Reportnet publishes validation results with no timestamp or run id, and
+        does not clear them while a new run is in flight — so a stale read looks
+        exactly like a fresh one. Two ways to be stale, both seen on dataflow
+        2003:
+
+        - **A newer validation is running** (:attr:`superseded_by`). The listing
+          keeps serving the previous run's totals; one such run reported the
+          earlier numbers, unchanged, for over an hour.
+        - **The data was imported after the last validation finished**
+          (:attr:`data_changed_at` later than the run in :attr:`job`). The
+          results describe data that is no longer there.
+
+        When this is True, re-validate rather than acting on the numbers.
+        """
+        if self.superseded_by is not None:
+            return True
+        if self.job is None or self.data_changed_at is None:
+            return False
+        finished = self.job.status_changed_at
+        return finished is not None and self.data_changed_at > finished
 
     @property
     def ok(self) -> bool:
@@ -717,7 +808,15 @@ class ValidationResult:
         )
 
     @classmethod
-    def _from_raw(cls, dataset_id: int, raw: dict[str, Any]) -> "ValidationResult":
+    def _from_raw(
+        cls,
+        dataset_id: int,
+        raw: dict[str, Any],
+        *,
+        job: "JobRecord | None" = None,
+        superseded_by: "JobRecord | None" = None,
+        data_changed_at: "datetime | None" = None,
+    ) -> "ValidationResult":
         """Parse listGroupValidationsDL response into structured issues.
 
         The API response looks like::
@@ -760,7 +859,8 @@ class ValidationResult:
                     short_code=item.get("shortCode") or None,
                 ))
 
-        return cls(dataset_id=dataset_id, issues=issues, raw=raw)
+        return cls(dataset_id=dataset_id, issues=issues, raw=raw,
+                   job=job, superseded_by=superseded_by, data_changed_at=data_changed_at)
 
 
 

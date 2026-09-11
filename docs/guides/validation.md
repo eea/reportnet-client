@@ -1,63 +1,96 @@
-# Validate a dataset
+# Checking your data
 
-This runs existing rules and reads validation results. For creating rules and
-downloading their definitions, see [QC authoring](workflows.md#custodian-admin-author-quality-control-rules).
-
-## Trigger validation
+Validation runs Reportnet's own quality rules on the server and tells you what
+is wrong.
 
 ```python
-ie = client.for_dataflow(1619).for_provider(17)
-
-handle = ie.add_validation_job(dataset_id=93953)
-handle.wait(poll_interval=10.0, timeout=600.0)
+result = me.validate(dataset_id=108952, timeout=1800)
+print(result.summary())
 ```
 
-If another job is already running on the dataset the API returns HTTP 423,
-which raises [`DatasetLockedError`][reportnet.DatasetLockedError]. Either
-wait and retry, or catch it explicitly:
+```
+dataset 108952: 8 issue(s) — 3 BLOCKER, 4 ERROR, 1 WARNING
+```
+
+## It is slow
+
+Minutes, not seconds. A large dataflow can take **twenty minutes or more** — one
+dataset here runs 433 rules. `validate()` waits for it, so give it a generous
+`timeout`.
+
+If it times out, the run is still going. **Do not start another one.** Reportnet
+refuses a second validation and puts an error banner on your dataflow. Read the
+results instead, which starts nothing:
 
 ```python
-from reportnet import DatasetLockedError
-
-try:
-    handle = ie.add_validation_job(dataset_id=93953)
-except DatasetLockedError:
-    print("Dataset busy — try again shortly")
+result = me.get_validation_results(dataset_id=108952)
 ```
 
-## Read validation results
+## Make sure you are reading this run
 
-### BigData datasets
+Reportnet's results carry no timestamp and no run number. While a new validation
+is going, it keeps serving the *previous* run's results — so old numbers look
+exactly like new ones. Identical totals from changed data is the whole trap.
+
+So always check:
 
 ```python
-results = ie.list_group_validations_dl(dataset_id=93953)
-# {"validations": [...], "totalRecords": 12, ...}
+if result.is_stale:
+    print("These are from an older run — wait and read again.")
 ```
 
-### Citus datasets
+`is_stale` is true when a validation is still running, or when you uploaded data
+after the last run finished. If you want the detail:
 
 ```python
-results = ie.list_group_validations(dataset_id=93953)
+print(result.job.id, result.job.status_changed_at)   # which run these came from
+print(result.data_changed_at)                        # when data last changed
+print(result.superseded_by)                          # a run happening now
 ```
 
-## Download a release snapshot
-
-After data has been officially released/submitted, you can download the
-validation results for that snapshot as CSV bytes:
+## Reading the issues
 
 ```python
-csv_bytes = ie.download_validation_snapshot(
-    snapshot_id=7,
-    dataset_id=93953,
-)
-with open("validation_snapshot.csv", "wb") as f:
-    f.write(csv_bytes)
+for issue in result.issues:
+    print(issue.level, issue.table, issue.field, issue.record_count, issue.message)
 ```
 
-## Release history (custodian)
+```
+BLOCKER Reporter      None 1  Mandatory table has no records
+ERROR   DischargePoints dcpState 15  The value is not a valid member of the referenced list.
+WARNING UWWTPs        None 14  Some of the treatment plants reported as PASSED are potentially overloaded
+```
+
+Or as a table:
 
 ```python
-releases = ie.list_historic_releases(dataset_id=93953)
-for r in releases:
-    print(r.get("releaseDate"), r.get("status"))
+print(result.to_frame())
 ```
+
+## What the levels mean
+
+| Level | Meaning |
+|---|---|
+| **BLOCKER** | must be fixed — you cannot release |
+| **ERROR** | should be fixed |
+| **WARNING** | looks odd; often fine, but worth a look |
+| **INFO** | for your information |
+
+```python
+if result.has_blockers:
+    print("Not ready to release yet.")
+```
+
+## A failing rule is a question, not a verdict
+
+Rules are written by the dataflow's administrators, and they can be wrong. One
+real example: a rule reported *"plants with capacity over 100 000 p.e. are
+missing an E-PRTR code"* and flagged all fifteen plants in a dataset where only
+one was that large — its SQL was missing a pair of brackets.
+
+If a rule fires on data you believe is correct, read the message carefully and
+ask the dataflow's custodian. Do not contort good data to satisfy a bad rule.
+
+## Next
+
+[Downloading](export.md), or [when something goes wrong](troubleshooting.md).

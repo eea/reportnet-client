@@ -68,10 +68,24 @@ class CodelistResolutionError(ReportnetError):
 
 
 class JobFailedError(ReportnetError):
-    def __init__(self, job_id: int, status: str) -> None:
+    """A job reached a terminal non-successful status.
+
+    ``info`` carries Reportnet's own explanation from the poll response, when
+    it gave one. It is the only place the real reason appears — the status
+    alone is never actionable. Live examples: "Import files contain incorrect
+    headers. Please ensure the headers in your files exactly match the field
+    names of the corresponding tables." and "Import is not allowed for this
+    dataset." (a locked reference dataset).
+    """
+
+    def __init__(self, job_id: int, status: str, info: str | None = None) -> None:
         self.job_id = job_id
         self.status = status
-        super().__init__(f"Job {job_id} ended with status {status}")
+        self.info = info
+        message = f"Job {job_id} ended with status {status}"
+        if info:
+            message += f": {info}"
+        super().__init__(message)
 
 
 class JobTimeoutError(ReportnetError):

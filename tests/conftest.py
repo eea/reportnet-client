@@ -1,3 +1,4 @@
+import httpx
 import pytest
 import respx
 
@@ -26,6 +27,13 @@ def pytest_collection_modifyitems(
 @pytest.fixture
 def mock_router():
     with respx.mock(base_url="https://api.reportnet.europa.eu", assert_all_called=False) as router:
+        # Reading validation results now also reads the job history, because the
+        # listing itself carries no run id and Reportnet serves the previous
+        # run's results while a new one is in flight. Default to "no history";
+        # tests that care about provenance override this route.
+        router.get("/orchestrator/jobs").mock(
+            return_value=httpx.Response(200, json={"jobsList": []})
+        )
         yield router
 
 

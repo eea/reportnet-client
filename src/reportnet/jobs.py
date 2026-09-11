@@ -92,8 +92,15 @@ class JobHandle:
                 on_status(current)
             if current.is_terminal:
                 if not current.is_successful:
-                    logger.warning("job %d ended with %s", self.job_id, current.value)
-                    raise JobFailedError(self.job_id, current.value)
+                    # Reportnet puts the actual reason in `info`; without it the
+                    # status alone tells the caller nothing they can act on.
+                    raw_info = data.get("info")
+                    info = str(raw_info) if raw_info else None
+                    logger.warning(
+                        "job %d ended with %s%s",
+                        self.job_id, current.value, f": {info}" if info else "",
+                    )
+                    raise JobFailedError(self.job_id, current.value, info)
                 return self
             if deadline is not None and time.monotonic() >= deadline:
                 logger.warning(

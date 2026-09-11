@@ -11,6 +11,9 @@ Thumbs.db
 
 # Python
 __pycache__/
+
+# marimo session cache
+__marimo__/
 *.py[cod]
 *.pyo
 *.pyd

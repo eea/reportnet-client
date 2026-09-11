@@ -1,112 +1,80 @@
-# Import data
+# Uploading
 
-## Basic import
-
-```python
-flow = client.for_dataflow(1619)
-ie = flow.find_reporter("IE")        # or flow.for_provider(17)
-
-ds = ie.dataset("Table1a")           # look the dataset up by table name
-
-handle = ie.import_file(
-    dataset_id=ds.id,
-    file="data.csv",
-)
-handle.wait()
-```
-
-`.wait()` blocks until the import job finishes. It raises
-[`JobFailedError`][reportnet.JobFailedError] if the job ends in any status
-other than `FINISHED`.
-
-## Replace vs append
+## The short version
 
 ```python
-# Append rows (default)
-ie.import_file(dataset_id=93953, file="new_rows.csv", replace=False)
-
-# Replace all existing data
-ie.import_file(dataset_id=93953, file="full_dataset.csv", replace=True)
-
-# Or: delete first, then import
-ie.delete_dataset_data(dataset_id=93953)
-ie.import_file(dataset_id=93953, file="full_dataset.csv")
-```
-
-## Target a specific table
-
-```python
-ie.import_file(
-    dataset_id=93953,
-    file="table1a.csv",
-    table_schema_id="68dd41f045f9450001260da7",  # from the Reportnet URL
+me.import_frames(
+    dataset_id=108952,
+    frames={"Agglomerations": agglomerations_df, "UWWTPs": plants_df},
+    replace=True,
 )
 ```
 
-## File formats accepted
+That uploads each table, waits for each one to finish, and raises if any fails.
+`replace=True` clears the table first, so running it twice does not give you
+duplicates. Leave it out to add rows instead.
 
-| Type | Example |
-|------|---------|
-| File path | `"data.csv"` or `Path("data.csv")` |
-| Raw bytes | `b"col1\|col2\n1\|2"` |
-| File object | `open("data.csv", "rb")` |
-| DataFrame | `polars.DataFrame(...)` or `pandas.DataFrame(...)` |
+## Your columns will not match, and that is fine
 
-## Delimiter
+Reportnet rejects an upload whose column headers are not **exactly** the table's
+field list. Not a few extra, not a few missing — exactly.
 
-The Reportnet API expects **pipe (`|`) as the default delimiter**, not commas.
-This is the default in the library. Override it if needed:
+Real data never arrives like that. It carries extra columns from whatever
+produced it, it is missing fields your source never had, and dates often come
+through with a time attached that a date field refuses.
 
-```python
-ie.import_file(dataset_id=93953, file="data.csv", delimiter=",")
+`import_frames` fixes all of that for you before sending. It adds missing
+fields as empty, drops columns the schema does not know, puts them in the right
+order, and formats dates. You will see it in the log:
+
+```
+WARNING Agglomerations: dropped 6 column(s) not in the schema: ['countryCode', 'snapshotId', ...]
+WARNING Agglomerations: added ['repCode'] as EMPTY but the schema marks it required — supply a value
 ```
 
-## Importing from a DataFrame
+**Read those warnings.** The first is usually harmless — pipeline leftovers. The
+second is not: it means a required field has no value, which will pass the
+upload and fail validation. Only you can supply the value.
+
+If you would rather send your frames untouched, pass `align=False`.
+
+## Uploading a file instead
 
 ```python
-import polars as pl
-
-data = pl.DataFrame({
-    "category": ["Total including LULUCF"],
-    "cyear": [2024],
-    "gas": ["CO2"],
-    "cvalue": [1234.5],
-})
-
-ie.import_file(
-    dataset_id=93953,
-    file=data,
-    table_schema_id="68dd41f045f9450001260da7",
-)
+me.import_file(dataset_id=108952, file="agglomerations.csv").wait()
 ```
 
-!!! note
-    The `record_id` column must **not** be included — Reportnet assigns it on
-    ingestion. Use [`get_schema()`](schema.md) to see which columns are expected.
+Works with a path, raw bytes, a DataFrame, or a zip of CSVs named after the
+tables. CSV and zipped CSV are handled directly. Other formats — Excel, XML —
+need a conversion step that the dataflow's administrator sets up, and you pass
+its `integration_id`.
 
-## Progress callback
+`.wait()` matters: without it you have only started the job, not finished it.
+
+## Check what actually arrived
 
 ```python
-handle = ie.import_file(dataset_id=93953, file="data.csv")
-handle.wait(
-    poll_interval=5.0,
-    timeout=300.0,
-    on_status=lambda s: print(f"import: {s}"),
-)
+for table, info in me.verify_import(dataset_id=108952).items():
+    if info["records"]:
+        print(table, info["records"], "rows")
 ```
 
-## ETL import (Citus / JSON)
+Worth doing. An upload can report success and still land fewer rows than you
+expected.
 
-For Citus datasets only, you can push structured JSON directly:
+## If an upload fails
 
-```python
-ie.etl_import(
-    dataset_id=93953,
-    tables=[{
-        "tableSchemaId": "68dd41f0...",
-        "records": [
-            {"fields": [{"fieldSchemaId": "abc", "value": "Total"}]},
-        ],
-    }],
-).wait()
+The error tells you why:
+
 ```
+JobFailedError: Job 249691 ended with status CANCELED:
+  Import files contain incorrect headers. Please ensure the headers in your
+  files exactly match the field names of the corresponding tables.
+```
+
+The message after the colon is Reportnet's own words. See
+[when something goes wrong](troubleshooting.md) for what the common ones mean.
+
+## Next
+
+[Checking your data](validation.md).

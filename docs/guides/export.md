@@ -1,140 +1,56 @@
-# Export data
+# Downloading
 
-All export methods return a [`JobHandle`][reportnet.JobHandle]. The job runs
-in the background; call `.result()` for raw bytes or `.to_frames()` to get
-DataFrames directly.
-
-## ETL export — ZIP of CSVs (recommended)
-
-Returns a ZIP archive with one CSV per table.
+## Your data as tables
 
 ```python
-ie = client.for_dataflow(1619).for_provider(17)
+export = me.export_frames(dataset_id=108952)
 
-handle = ie.etl_export(dataset_id=93953)
-zip_bytes = handle.result(poll_interval=10.0, timeout=600.0)
-
-with open("export.zip", "wb") as f:
-    f.write(zip_bytes)
+for name, df in export.frames.items():
+    print(name, len(df), "rows")
 ```
 
-## Export directly to DataFrames
+`export.frames` is a dict of table name to DataFrame. `export.verification`
+tells you whether what came back matched the dataset's structure.
 
-Requires `pip install "reportnet-client[dataframe]"`.
+You get one DataFrame per table, in pandas or polars. Useful for checking what
+is actually stored, or for pulling last year's submission as a starting point
+for this year's.
+
+## As a file
 
 ```python
-frames = ie.etl_export(dataset_id=93953).to_frames(poll_interval=10.0, timeout=600.0)
-# {"Table1a": <polars.DataFrame>, "Table1b": <polars.DataFrame>}
-
-for name, frame in frames.items():
-    print(name, frame.shape)
-    print(frame.head())
+handle = me.etl_export(dataset_id=108952)
+data = handle.result()                 # waits, then returns the bytes
+open("export.zip", "wb").write(data)
 ```
 
-`to_frames()` tries polars first, falls back to pandas.
+## Data with geometry
 
-## Progress callback
+If your dataset holds shapes or points, ask for a GeoDataFrame:
 
 ```python
-frames = ie.etl_export(dataset_id=93953).to_frames(
-    poll_interval=10.0,
-    timeout=600.0,
-    on_status=lambda s: print(f"export: {s}"),
-)
+import reportnet
+
+export = me.export_frames(dataset_id=108957)
+gdf = reportnet.to_geodataframe(export.frames["ProtectedArea"])
 ```
 
-## Checked export — `export_frames()`
+Needs the `spatial` extra (`pip install "reportnet-client[spatial]"`).
 
-`etl_export().to_frames()` returns whatever the server sent. `export_frames()`
-downloads once and checks it against a freshly fetched schema, so a truncated
-or wrong-shaped payload is caught rather than silently analysed:
+## Export formats
+
+Reportnet has more than one export format and they are not interchangeable. The
+library picks the right one for your dataflow automatically. You only need to
+care if you are told to use a specific version:
 
 ```python
-result = ie.export_frames(dataset_id=93953, timeout=600)
-print(result.verification.summary())
-frames = result.frames
+me.etl_export(dataset_id=108952, version=5)     # zipped Parquet
 ```
 
-It raises `ExportVerificationError` when tables or columns do not match. Pass
-`strict=False` to warn and log instead — every frame is still returned
-alongside the report, so nothing is discarded:
+Version 5 is not a drop-in replacement for version 4 — it can return a different
+set of tables and a different geometry encoding. Use the default unless you have
+a reason.
 
-```python
-result = ie.export_frames(dataset_id=93953, strict=False)
-if not result.verification.ok:
-    print(result.verification.missing_tables, result.verification.unexpected_tables)
-```
+## Next
 
-The check is **structural**: it proves the table and column names match the
-schema, never that the values are right or complete. Empty tables are reported
-in `verification.empty_tables` rather than treated as a failure — on dataflow
-2003 a reference export returned all seven expected tables, all empty, and a v5
-export returned [47 tables for a seven-table
-schema](../live-tests-2003.md#reference-export-accepted-does-not-mean-useful).
-Both are exactly what this check exists to surface.
-
-Pass `table_schema_id=` to export and verify a single table.
-
-## ETL export v5 — Parquet
-
-Use `version=5` to receive partitioned Parquet files instead of CSVs.
-It is opt-in only and never chosen automatically. Size and speed depend on
-the dataset; see the [live comparison](../live-tests-2003.md). Production v5
-adds `data_provider_code`, and its ZIP layout differs from v4. On reference
-108961 it returned 47 tables for a seven-table schema; avoid v5 reference
-exports on this dataflow. The reporting spatial dataset passed an explicit
-content comparison.
-`to_frames()` handles it transparently, same as v4:
-
-```python
-frames = ie.etl_export(dataset_id=93953, version=5).to_frames(poll_interval=10.0, timeout=600.0)
-# {"Table1a": <polars.DataFrame>, "Table1b": <polars.DataFrame>}
-```
-
-Reading Parquet with the pandas backend additionally requires `pyarrow` or
-`fastparquet`; polars reads Parquet natively with no extra dependency.
-
-## Legacy exports: production limitations
-
-On dataflow 2003, both keys returned 403 for `export_file()` and
-`export_file_dl()`, and 404 for both `export_dataset_file` variants
-(8 September 2026). Custodian access did not fix them. Prefer `etl_export()`;
-pass `table_schema_id` to request one table. The examples below describe the
-wrapped routes, not verified alternatives on this deployment.
-
-### Single-table export
-
-```python
-# Standard (Citus)
-handle = ie.export_file(
-    dataset_id=93953,
-    table_schema_id="68dd41f0...",
-    mime_type="xlsx",   # "csv" or "xlsx"
-)
-xlsx_bytes = handle.result()
-
-# BigData variant
-handle = ie.export_file_dl(
-    dataset_id=93953,
-    table_schema_id="68dd41f0...",
-)
-```
-
-### Whole-dataset export
-
-```python
-# All tables in one file (CSV, XLSX or ZIP of CSVs)
-handle = ie.export_dataset_file(dataset_id=93953, mime_type="zip")
-zip_bytes = handle.result()
-
-# BigData variant
-handle = ie.export_dataset_file_dl(dataset_id=93953)
-```
-
-## Choosing the right export method
-
-| Situation | Method |
-|-----------|--------|
-| Standard (Citus) dataset, all tables | `etl_export()` |
-| BigData dataset, all tables | `etl_export()` (v4/v5) |
-| One table, BigData | `etl_export(table_schema_id=...)` |
+[When something goes wrong](troubleshooting.md).
