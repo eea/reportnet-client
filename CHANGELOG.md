@@ -10,6 +10,40 @@ they are always listed under **Changed** with a migration note.
 
 ## [Unreleased]
 
+### Added
+
+- **Schema design for custodians.** `DataflowClient.create_design_dataset()`
+  and `DataflowClient.design()` return a `SchemaDesigner` that adds, changes,
+  moves and deletes tables and fields, renames the dataset and sets its
+  description, and exports a table definition as CSV. It reads the schema back
+  after every change, and refuses API-key clients, non-design datasets,
+  schemas that already have a data collection or reporting datasets, tables
+  that hold records and duplicate names unless told otherwise. One `ReportnetClient` method per endpoint
+  underneath (`create_table_schema()`, `update_field_schema()`, …).
+- **Login-token authentication**, needed for schema design because API keys get
+  403. `ReportnetClient.from_tokens()` renews the access token before it
+  expires and once after a 401, and keeps the rotated refresh token
+  (`client.tokens`, or an `on_refresh` callback).
+  `ReportnetClient.from_credentials()` is experimental. Token and password
+  query values are masked in the library's logs and in httpx's.
+- `FieldSchema` gains `record_id`, `pk`, `read_only`, `max_size`,
+  `codelist_items`, `valid_extensions`, `pk_referenced`, `raw` and
+  `to_update_payload()`; `TableSchema` gains `record_id`, `not_empty`,
+  `read_only`, `to_prefill`, `fixed_number`, `data_manually_editable` and
+  `field()`; `DatasetSchema` gains `available_in_public` and
+  `reference_dataset`. All have defaults, so existing code is unaffected.
+- `Capabilities.auth_kind` (`"api_key"` or `"bearer"`).
+
+### Fixed
+
+- `SANDBOX_URL` pointed at `https://sandbox.reportnet.europa.eu`, the sandbox
+  *web app*, which answers API paths with an HTML page. It is now
+  `https://sandbox-api.reportnet.europa.eu`. This also fixes
+  `ReportnetClient.from_keyring(..., sandbox=True)` and
+  `connect_interactive(..., sandbox=True)`.
+- `TableSchema.from_dict()` raised `TypeError` on a table with no fields, which
+  Reportnet returns as `"fieldSchema": null` rather than an empty list.
+
 ## [0.5.1] — 2026-08-17
 
 ### Fixed

@@ -341,3 +341,70 @@ spec=json.load(sys.stdin)
 for m,op in spec['paths']['/dataset/v4/etlExport/{datasetId}'].items():
     print(op.get('description',''))"
 ```
+
+## Schema design (sandbox, dataflow 11468, 2026-11-12)
+
+Source: a custodian's live session on the sandbox. Request bodies were captured
+from the web app or sent with the user's login token. Nothing below has been
+repeated on production yet.
+
+- **API keys cannot change a schema.** A custodian API key got 403 on every
+  schema write and on `GET /dataschema/getSchemas/dataflow/{id}`, while it could
+  read `GET /dataflow/v1/{id}` and `GET /dataschema/v1/datasetId/{id}`. The same
+  calls with `Authorization: Bearer <login token>` returned 200.
+  `ReportnetClient.from_tokens()` exists for this.
+- **The sandbox API host is `sandbox-api.reportnet.europa.eu`.**
+  `sandbox.reportnet.europa.eu` is the web app and answers API paths with HTML.
+- **A partial field update fails and still saves.** `PUT …/fieldSchema` with
+  only `{id, description}` answered 500 (`status 400 reading
+  RulesControllerZuul#deleteRuleRequired`) and the description was saved. Always
+  send the whole field; a 5xx on a schema write never means "nothing changed".
+- **The API does not enforce the web app's table lock.** A full-body field PUT
+  on design dataset 33796, which holds data and is locked in the web app,
+  returned 200. The client checks for records itself.
+- **Duplicate table names are accepted** (two "Sites" in dataset 48097).
+- **Create calls return little.** `createEmptyDatasetSchema` returns an empty
+  body; find the new dataset in `designDatasets`. `POST …/fieldSchema` returns
+  the new id as `text/plain`. `POST …/tableSchema` returns the table, including
+  `recordSchema.idRecordSchema`, which a new field needs as `idRecord`.
+- **A new table has `"fieldSchema": null`**, not `[]`.
+- **Short outages.** For about 30 s, writes answered 500 `Load balancer does not
+  have available server for client: dataflow` and wrote nothing. Writes are not
+  retried; `SchemaWriteUncertainError` names this case.
+- **`/rules/{datasetSchemaId}/dataflow/{dataflowId}` works with a login token.**
+  It refuses API keys of every role. Schema changes create automatic rules
+  (`required`, `pk`, `type` and `notEmpty` each add one), which is why a bad
+  field body fails inside `RulesControllerZuul`.
+- **Token endpoints** take secrets as query parameters:
+  `POST /user/refreshToken?refreshToken=` (verified; the pair rotates),
+  `POST /user/generateToken?username=&password=` (not tested),
+  `POST /user/generateTokenByCode?code=` and `POST /user/logout?refreshToken=`
+  (not tested). httpx logs full URLs at INFO, so the client masks these values.
+  Never call `createApiKey` in tests: it replaces the user's key.
+
+| Operation | Endpoint | Wrapped as |
+|---|---|---|
+| Create design dataset | `POST /dataschema/createEmptyDatasetSchema?dataflowId=&datasetSchemaName=` | `create_empty_dataset_schema` |
+| Rename dataset | `PUT /datasetmetabase/updateDatasetName?datasetId=&datasetName=` | `update_dataset_name` |
+| Dataset description | `PUT /dataschema/{datasetId}/datasetSchema` `{"description"}` | `update_dataset_schema` |
+| Dataset metadata | `GET /datasetmetabase/{datasetId}` | `get_dataset_metabase` |
+| All schemas | `GET /dataschema/getSchemas/dataflow/{id}` (no dataset ids in items) | `list_schemas` |
+| Validate schemas | `GET /dataschema/validate/dataflow/{id}` → `true`/`false` | `validate_schemas` |
+| Create table | `POST /dataschema/{datasetId}/tableSchema` | `create_table_schema` |
+| Update table (partial body OK) | `PUT /dataschema/{datasetId}/tableSchema` | `update_table_schema` |
+| Move table | `PUT /dataschema/{datasetId}/tableSchema/order` `{"id","position"}` | `order_table_schema` |
+| Delete table | `DELETE /dataschema/{datasetId}/tableSchema/{id}` | `delete_table_schema` |
+| Create field | `POST /dataschema/{datasetId}/fieldSchema` | `create_field_schema` |
+| Update field (**whole body**) | `PUT /dataschema/{datasetId}/fieldSchema` | `update_field_schema` |
+| Move field | `PUT /dataschema/{datasetId}/fieldSchema/order` `{"id","position"}` | `order_field_schema` |
+| Delete field | `DELETE /dataschema/{datasetId}/fieldSchema/{id}` | `delete_field_schema` |
+| Export table definition | `GET /dataschema/v1/{schemaId}/exportFieldSchemas?datasetId=&tableSchemaId=&mimeType=csv` | `export_table_definition` |
+| Export all definitions (ZIP) | `GET /dataschema/v1/dataset/{datasetId}/exportFieldSchemas` (numeric id; a schema id gives 400) | `export_schema_definitions` |
+| Records in a table (BigData) | `GET /dataset/TableValueDatasetDL/{datasetId}?idTableSchema=&pageNum=0&pageSize=1&…` → `totalRecords` | `count_table_records` |
+
+Not verified, so not wrapped: deleting a whole design dataset
+(`/dataschema/dataset/{id}` in the web-app bundle, method unknown), importing a
+table definition (`importFieldSchemas` answered 500 and added nothing),
+whole-schema export/import/copy, the dataset's reference and public flags,
+field types "Multiline text", "Email", "URL" and "Phone", and a Citus
+record-count route (the designer falls back to import statistics and warns).
