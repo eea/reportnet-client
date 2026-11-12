@@ -90,7 +90,7 @@ def test_connect_interactive_auth_error_with_country_code(mock_router):
 @pytest.mark.parametrize("sandbox", [False, True])
 def test_connect_interactive_passes_sandbox_flag_to_keyring(mock_router, sandbox):
     url = (
-        "https://sandbox.reportnet.europa.eu/dataflow/v1/1619"
+        "https://sandbox-api.reportnet.europa.eu/dataflow/v1/1619"
         if sandbox
         else "/dataflow/v1/1619"
     )

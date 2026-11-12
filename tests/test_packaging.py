@@ -92,3 +92,11 @@ def test_every_public_model_is_re_exported_at_top_level():
         f"models.__all__ exports {missing}, which reportnet does not re-export — "
         f"add them to src/reportnet/__init__.py"
     )
+
+
+def test_sandbox_url_is_the_api_host_not_the_web_app():
+    # sandbox.reportnet.europa.eu serves the web app and answers API paths with
+    # text/html; the API lives on sandbox-api (verified 2026-11-12).
+    import reportnet
+
+    assert reportnet.SANDBOX_URL == "https://sandbox-api.reportnet.europa.eu"

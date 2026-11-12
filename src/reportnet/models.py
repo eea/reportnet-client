@@ -8,10 +8,10 @@ a live HTTP session; it is re-exported here for backwards compatibility.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Mapping, TypeAlias
 
 # Re-exported for backwards compatibility with `from reportnet.models import JobHandle`.
 from .jobs import JobHandle, JobStatus
@@ -355,6 +355,9 @@ class Capabilities:
     dataflow_id: int
     can_read_dataflow: bool
     can_read_representatives: bool
+    # "api_key" or "bearer". The probe was designed for API keys; with a login
+    # token it reflects the *person's* roles, which may cover several.
+    auth_kind: str = "api_key"
 
     @property
     def role(self) -> str:
@@ -408,7 +411,8 @@ class Capabilities:
         if not self.is_usable:
             return f"dataflow {self.dataflow_id}: key not usable"
         extra = "; reads must be provider-scoped" if self.needs_provider_scope else ""
-        return f"dataflow {self.dataflow_id}: inferred {self.role} key{extra}"
+        what = "login token" if self.auth_kind == "bearer" else "key"
+        return f"dataflow {self.dataflow_id}: inferred {self.role} {what}{extra}"
 
 
 # ── Schema models ─────────────────────────────────────────────────────────────
@@ -443,6 +447,35 @@ class FieldType(str, Enum):
         return unknown
 
 
+# Keys the schema GET returns but the web app never sends back on a field
+# update; they are derived by the server.
+_FIELD_READ_ONLY_KEYS = ("pkReferenced", "pkMustBeUsed", "pkHasMultipleValues",
+                         "ignoreCaseInLinks")
+
+# Python keyword → wire name for FieldSchema.to_update_payload().
+_FIELD_PROPS = {
+    "name": "name",
+    "description": "description",
+    "type": "type",
+    "required": "required",
+    "pk": "pk",
+    "read_only": "readOnly",
+    "codelist_items": "codelistItems",
+    "valid_extensions": "validExtensions",
+    "max_size": "maxSize",
+    "referenced_field": "referencedField",
+}
+
+
+def _int_or_none(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(str(value)))
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class FieldSchema:
     id: str
@@ -453,6 +486,16 @@ class FieldSchema:
     # LINK / MULTISELECT_LINK fields reference a primary-key field in a reference dataset.
     referenced_schema_id: str | None = None  # idDataSetSchema of the reference dataset
     referenced_pk_id: str | None = None      # field schema ID of the PK column in that dataset
+    record_id: str = ""                      # idRecord — the table's record schema id
+    pk: bool = False
+    read_only: bool = False
+    max_size: int | None = None              # the API returns 100, 100.0 or "100"
+    codelist_items: tuple[str, ...] = ()
+    valid_extensions: tuple[str, ...] = ()
+    pk_referenced: bool = False              # another field LINKs to this one
+    # The field exactly as read, so an update can send back properties this
+    # library does not model.
+    raw: Mapping[str, Any] = field(default_factory=dict, compare=False, hash=False, repr=False)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "FieldSchema":
@@ -465,7 +508,65 @@ class FieldSchema:
             required=bool(d.get("required", False)),
             referenced_schema_id=ref.get("idDatasetSchema") or None,
             referenced_pk_id=ref.get("idPk") or None,
+            record_id=d.get("idRecord") or "",
+            pk=bool(d.get("pk")),
+            read_only=bool(d.get("readOnly")),
+            max_size=_int_or_none(d.get("maxSize")),
+            codelist_items=tuple(d.get("codelistItems") or ()),
+            valid_extensions=tuple(d.get("validExtensions") or ()),
+            pk_referenced=bool(d.get("pkReferenced")),
+            raw=dict(d),
         )
+
+    def to_update_payload(self, **changes: Any) -> dict[str, Any]:
+        """The whole field as a ``PUT …/fieldSchema`` body, with *changes* applied.
+
+        Reportnet needs the complete field on update: a partial body answered
+        HTTP 500 on the sandbox and still saved part of the change. This starts
+        from the field as read (:attr:`raw`, so unknown properties survive),
+        drops the server-derived keys the web app never sends, and changes only
+        what you name.
+
+        Keywords: ``name``, ``description``, ``type``, ``required``, ``pk``,
+        ``read_only``, ``codelist_items``, ``valid_extensions``, ``max_size``,
+        ``referenced_field``.
+
+        Example::
+
+            payload = field.to_update_payload(description="Site code", required=True)
+            client.update_field_schema(dataset_id=48097, payload=payload)
+        """
+        unknown = set(changes) - set(_FIELD_PROPS)
+        if unknown:
+            raise TypeError(
+                f"Unknown field properties {sorted(unknown)}; known: {sorted(_FIELD_PROPS)}"
+            )
+        if self.raw:
+            body = {k: v for k, v in self.raw.items() if k not in _FIELD_READ_ONLY_KEYS}
+        else:
+            body = {
+                "name": self.name, "description": self.description, "type": self.type.value,
+                "required": self.required, "pk": self.pk, "readOnly": self.read_only,
+                "codelistItems": list(self.codelist_items),
+                "validExtensions": list(self.valid_extensions),
+                "maxSize": self.max_size,
+                "referencedField": (
+                    {"idDatasetSchema": self.referenced_schema_id, "idPk": self.referenced_pk_id}
+                    if self.referenced_pk_id else None
+                ),
+            }
+        body["id"] = self.id
+        body["idRecord"] = self.raw.get("idRecord") or self.record_id
+        for key, value in changes.items():
+            if key == "type":
+                value = FieldType(value).value
+            elif key in ("codelist_items", "valid_extensions"):
+                value = list(value)
+            elif key == "max_size":
+                # The web app sends maxSize as a string on update.
+                value = None if value is None else str(value)
+            body[_FIELD_PROPS[key]] = value
+        return body
 
 
 @dataclass(frozen=True)
@@ -474,16 +575,38 @@ class TableSchema:
     name: str
     description: str
     fields: tuple[FieldSchema, ...]
+    record_id: str = ""            # recordSchema.idRecordSchema — needed to add a field
+    read_only: bool = False        # web app: "Read only table"
+    to_prefill: bool = False       # "Prefilled"
+    not_empty: bool = False        # "Mandatory table"
+    fixed_number: bool = False     # "Fixed number of records"
+    data_manually_editable: bool = False  # "Available for manual editing"
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "TableSchema":
-        raw_fields = d.get("recordSchema", {}).get("fieldSchema", [])
+        record = d.get("recordSchema") or {}
+        # A new table with no fields has `"fieldSchema": null`, not `[]`.
+        raw_fields = record.get("fieldSchema") or []
         return cls(
             id=d["idTableSchema"],
             name=d["nameTableSchema"],
             description=d.get("description") or "",
             fields=tuple(FieldSchema.from_dict(f) for f in raw_fields),
+            record_id=record.get("idRecordSchema") or "",
+            read_only=bool(d.get("readOnly")),
+            to_prefill=bool(d.get("toPrefill")),
+            not_empty=bool(d.get("notEmpty")),
+            fixed_number=bool(d.get("fixedNumber")),
+            data_manually_editable=bool(d.get("dataAreManuallyEditable")),
         )
+
+    def field(self, name: str) -> FieldSchema:
+        """Return the field with the given name, or raise KeyError."""
+        for f in self.fields:
+            if f.name == name:
+                return f
+        raise KeyError(f"No field named {name!r} in table {self.name!r}; "
+                       f"available: {self.column_names()}")
 
     def required_columns(self) -> list[str]:
         """Names of fields that are required for import."""
@@ -636,6 +759,8 @@ class DatasetSchema:
     name: str
     description: str
     tables: tuple[TableSchema, ...]
+    available_in_public: bool = False
+    reference_dataset: bool = False
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "DatasetSchema":
@@ -643,7 +768,9 @@ class DatasetSchema:
             id=d["idDataSetSchema"],
             name=d["nameDatasetSchema"],
             description=d.get("description") or "",
-            tables=tuple(TableSchema.from_dict(t) for t in d.get("tableSchemas", [])),
+            tables=tuple(TableSchema.from_dict(t) for t in d.get("tableSchemas") or []),
+            available_in_public=bool(d.get("availableInPublic")),
+            reference_dataset=bool(d.get("referenceDataset")),
         )
 
     def table(self, name: str) -> TableSchema:
