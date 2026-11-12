@@ -99,4 +99,23 @@ create-and-read shows their names (brief §10).
   resolves in DNS there. The PM writes the instructions for that session:
   [cws-test-instructions.md](cws-test-instructions.md). This replaces the
   recommendation in D-05 that the owner runs the tests on the laptop. (Marc
-  Ridler, 2026-11-12.)
+  Ridler, 2026-11-12.) **Changed the same day:** the laptop reached the sandbox
+  over the VPN, so the owner asked for the test to run there ("Test on the
+  sandbox"). The owner ran steps 3–4 in their own terminal and the PM ran the
+  rest. Result: passed ([report](cws-test-report-2026-11-12.md)).
+- **D-12, open.** Delete scratch dataset 48100 `rnclient-it-20261112-152744`
+  in the web app. **Recommended:** yes. Also add design dataset 48099
+  `IMPORTED_ClaudeImportTest` to the do-not-touch list for future live tests.
+- **D-13, done; review open.** At the owner's request (2026-11-12), the
+  library built design dataset **48105 `SpatialPoints`** in sandbox 11468, with
+  table `Agglomeration` taken from the draft rUWWTD 2024 spec
+  (`SpatialPoints/Agglomeration.html`): 18 fields, `thematicIdIdentifier` as
+  the primary key. Choices that need the owner's review:
+  - `nameLanguage` and `zoneType` are TEXT, not codelists.
+  - `specialisedZoneType` uses the 3 codes that are only proposed (SP-18).
+  - Conditional fields are optional; their conditions need QC rules.
+  - There are no length limits.
+  - The coordinate system and the 4-decimal rule need QC rules.
+
+  The build script is not in this repository; it belongs with the UWWTD
+  dataflow work (`eea/uwwtd`). Add 48105 to the do-not-touch list for tests.

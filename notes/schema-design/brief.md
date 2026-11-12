@@ -1,8 +1,9 @@
 # Project brief: schema design for custodians
 
 **For:** the owner, the PM and any agent resuming this work. **Status:**
-2026-11-12. **Follows:** `eea/ai-reporting-workflows` at commit `main` as
-cloned on 2026-11-12 (no release tag yet). **Source:**
+2026-11-12. **Follows:** `eea/ai-reporting-workflows` at commit `aec66fe`
+(no release tag yet; local clone `C:\Users\Ridler\repos\ai-reporting-workflows`,
+read-only, R-05). **Source:**
 `temp/AGENT_BRIEF_schema_design.md` in the main checkout (the owner's technical
 brief; sections are cited below as "brief §n").
 
@@ -57,7 +58,9 @@ About 1,500 new lines in total: `src` ≤ 900, tests ≤ 700, docs and notes
 - Out of scope (brief §10, not verified): deleting a whole design dataset,
   importing a table definition, whole-schema export/import/copy, dataset
   flags, unique and row constraints, webforms, new field types.
-- Writable: the worktree `.claude/worktrees/schema-design` (branch
+- Update 2026-11-12: the worktree has been removed. Work continues in the
+  main checkout, which is on `feat/schema-design` with a clean tree.
+- Writable (originally): the worktree `.claude/worktrees/schema-design` (branch
   `feat/schema-design`, from `main` b10da6e). Read-only: the main checkout and
   its uncommitted work on `fix/validation-evidence`.
 - No live API calls by the agent: the agent has no login token, and writes to
@@ -79,7 +82,8 @@ About 1,500 new lines in total: `src` ≤ 900, tests ≤ 700, docs and notes
 | Granted | Action | Scope | By | Until |
 | --- | --- | --- | --- | --- |
 | 2026-11-12 | Commit, one commit per work package, owner's Git identity, no AI co-author line | branch `feat/schema-design` only | Marc Ridler | the push below |
-| 2026-11-12 | Push | `feat/schema-design` to `origin` (github.com/eea/reportnet-client); no pull request, no merge, no force push | Marc Ridler | done once |
+| 2026-11-12 | Push | `feat/schema-design` to `origin` (github.com/eea/reportnet-client); no pull request, no merge, no force push | Marc Ridler | used 2026-11-12: 8 commits pushed, `origin/feat/schema-design` = `7726eeb`. No commit or push permission is open now |
+| 2026-11-12 | Commit the project-record updates, push `feat/schema-design`, open one pull request to `main`. No merge | `eea/reportnet-client` | Marc Ridler ("commit and push. Create a PR") | the pull request is opened |
 
 ## Environment
 
