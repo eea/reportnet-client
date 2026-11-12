@@ -41,6 +41,7 @@ from .models import (
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
+    from ._auth import TokenAuth, TokenPair
     from .dataflow import DataflowClient
 
 
@@ -53,18 +54,24 @@ SANDBOX_URL = "https://sandbox-api.reportnet.europa.eu"
 class ReportnetClient:
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         base_url: str = PRODUCTION_URL,
         timeout: float = 60.0,
+        *,
+        auth: "TokenAuth | None" = None,
     ) -> None:
         """Args:
+            api_key: A Reportnet API key. Enough for reporting work.
             timeout: HTTP request timeout in seconds. The default is generous
                 because GET /dataflow/v1/{id} is slow on large dataflows —
                 30s was low enough to ReadTimeout on one measured live, and a
                 timeout there also breaks every method that reads it. Raise it
                 further for very large dataflows.
+            auth: A login token instead of an API key; prefer
+                :meth:`from_tokens`. Needed for schema design.
         """
-        self._http = HttpSession(api_key=api_key, base_url=base_url, timeout=timeout)
+        self._auth = auth
+        self._http = HttpSession(api_key=api_key, base_url=base_url, timeout=timeout, auth=auth)
         # bigData-ness is immutable for a given dataflow, so this is safe to keep
         # for the lifetime of the client. Shared with DataflowClient, which
         # delegates rather than keeping a second copy.
@@ -108,6 +115,103 @@ class ReportnetClient:
             base_url=base_url,
             timeout=timeout,
         )
+
+    @classmethod
+    def from_tokens(
+        cls,
+        access_token: str,
+        refresh_token: str,
+        *,
+        sandbox: bool = False,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+        on_refresh: "Callable[[TokenPair], None] | None" = None,
+    ) -> "ReportnetClient":
+        """Create a client that authenticates with a **login token**.
+
+        Schema design needs this: API keys get 403 on every schema write
+        (verified on sandbox dataflow 11468, 2026-11-12). The client renews the
+        access token itself before it expires, and once more if a request is
+        refused as unauthenticated.
+
+        Copy both tokens from the Reportnet web app while you are logged in:
+        browser DevTools → Application → Session storage → ``reportnet_03``.
+
+        The refresh token rotates on every renewal. Pass *on_refresh* to store
+        the newest pair, or read :attr:`tokens` before the program exits.
+
+        Example::
+
+            client = ReportnetClient.from_tokens(
+                access_token=..., refresh_token=..., sandbox=True)
+            flow = client.for_dataflow(11468)
+        """
+        from ._auth import TokenAuth
+        if base_url is None:
+            base_url = SANDBOX_URL if sandbox else PRODUCTION_URL
+        auth = TokenAuth(
+            access_token, refresh_token, base_url=base_url, on_refresh=on_refresh
+        )
+        return cls(base_url=base_url, timeout=timeout, auth=auth)
+
+    @classmethod
+    def from_credentials(
+        cls,
+        username: str,
+        password: str,
+        *,
+        sandbox: bool = False,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+        on_refresh: "Callable[[TokenPair], None] | None" = None,
+    ) -> "ReportnetClient":
+        """Log in with a Reportnet username and password. **Experimental.**
+
+        Calls ``POST /user/generateToken``, the endpoint the web app uses. It
+        has not been tested live, and it probably does not work for EU Login
+        accounts. Prefer :meth:`from_tokens`.
+
+        **Risk:** the endpoint takes the password as a URL query parameter, so
+        it can appear in proxy or gateway logs between you and Reportnet. The
+        library masks it in its own logs and in httpx's.
+
+        Example::
+
+            client = ReportnetClient.from_credentials("me", getpass(), sandbox=True)
+        """
+        from ._auth import GENERATE_PATH, request_tokens
+        if base_url is None:
+            base_url = SANDBOX_URL if sandbox else PRODUCTION_URL
+        pair = request_tokens(
+            base_url, GENERATE_PATH, {"username": username, "password": password},
+            timeout=timeout,
+        )
+        return cls.from_tokens(
+            pair.access_token, pair.refresh_token, base_url=base_url,
+            timeout=timeout, on_refresh=on_refresh,
+        )
+
+    @property
+    def auth_kind(self) -> Literal["api_key", "bearer"]:
+        """``"api_key"`` or ``"bearer"`` (a login token)."""
+        return "bearer" if self._auth is not None else "api_key"
+
+    @property
+    def tokens(self) -> "TokenPair | None":
+        """The current login-token pair, or None for an API-key client.
+
+        Read this to store the newest refresh token; it rotates on each renewal.
+        """
+        return self._auth.tokens if self._auth is not None else None
+
+    def refresh_tokens(self) -> "TokenPair":
+        """Renew the login token now (``POST /user/refreshToken``).
+
+        Not normally needed: the client renews it before it expires.
+        """
+        if self._auth is None:
+            raise TypeError("This client uses an API key; there is no token to refresh.")
+        return self._auth.refresh()
 
     def for_dataflow(
         self,
@@ -205,6 +309,7 @@ class ReportnetClient:
             dataflow_id=dataflow_id,
             can_read_dataflow=can_read_dataflow,
             can_read_representatives=can_read_representatives,
+            auth_kind=self.auth_kind,
         )
         logger.info("capabilities: %s", caps.summary())
         self._capabilities_cache[dataflow_id] = caps

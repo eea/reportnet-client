@@ -33,7 +33,27 @@ def _backoff(attempt: int) -> float:
 
 
 class HttpSession:
-    def __init__(self, api_key: str, base_url: str, timeout: float) -> None:
+    """One ``httpx.Client`` with auth, error mapping and retry.
+
+    Pass either *api_key* (``Authorization: ApiKey …``) or *auth*, an
+    ``httpx.Auth`` such as :class:`~reportnet._auth.TokenAuth` for a login
+    token. Exactly one is required.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str = "",
+        timeout: float = 60.0,
+        *,
+        auth: httpx.Auth | None = None,
+    ) -> None:
+        if auth is not None:
+            if api_key:
+                raise ValueError("Pass either api_key or auth, not both.")
+            self.auth_kind = "bearer"
+            self._client = httpx.Client(base_url=base_url, auth=auth, timeout=timeout)
+            return
         api_key = api_key.strip() if api_key else api_key
         if not api_key:
             raise ValueError(
@@ -41,6 +61,7 @@ class HttpSession:
                 f"{api_key!r}. Check the value passed to ReportnetClient() "
                 "or stored via reportnet.save_key()."
             )
+        self.auth_kind = "api_key"
         self._client = httpx.Client(
             base_url=base_url,
             headers={"Authorization": f"ApiKey {api_key}"},

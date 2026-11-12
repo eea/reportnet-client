@@ -355,6 +355,9 @@ class Capabilities:
     dataflow_id: int
     can_read_dataflow: bool
     can_read_representatives: bool
+    # "api_key" or "bearer". The probe was designed for API keys; with a login
+    # token it reflects the *person's* roles, which may cover several.
+    auth_kind: str = "api_key"
 
     @property
     def role(self) -> str:
@@ -408,7 +411,8 @@ class Capabilities:
         if not self.is_usable:
             return f"dataflow {self.dataflow_id}: key not usable"
         extra = "; reads must be provider-scoped" if self.needs_provider_scope else ""
-        return f"dataflow {self.dataflow_id}: inferred {self.role} key{extra}"
+        what = "login token" if self.auth_kind == "bearer" else "key"
+        return f"dataflow {self.dataflow_id}: inferred {self.role} {what}{extra}"
 
 
 # ── Schema models ─────────────────────────────────────────────────────────────
