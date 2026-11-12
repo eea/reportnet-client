@@ -126,3 +126,97 @@ class ReadbackVerificationError(ReportnetError):
         self.verification = verification
         super().__init__(verification.summary() + "; validation was not started. "
                          "Inspect current data before retrying; uploads are not rolled back.")
+
+
+class SchemaDesignNotPermittedError(AuthError):
+    """Schema design was attempted with an API key.
+
+    Raised **before** any request is sent. API keys get 403 on every schema
+    write and on ``getSchemas``; a login token is needed (verified on sandbox
+    dataflow 11468, 2026-11-12). Create the client with
+    :meth:`~reportnet.ReportnetClient.from_tokens`.
+    """
+
+    def __init__(self, operation: str) -> None:
+        super().__init__(
+            403,
+            f"{operation} needs a login token, not an API key: API keys get 403 on "
+            "schema changes (verified on the sandbox, 2026-11-12). Create the client "
+            "with ReportnetClient.from_tokens(access_token, refresh_token).",
+        )
+
+
+class SchemaWriteUncertainError(APIError):
+    """A schema change got a server error. **It may still have been applied.**
+
+    Seen live: a field update answered HTTP 500 and the new description was
+    saved anyway. Read the schema again before you retry.
+    """
+
+    def __init__(self, status_code: int, response_body: str, operation: str) -> None:
+        self.operation = operation
+        if "Load balancer does not have available server" in response_body:
+            cause = ("Reportnet's schema service was briefly unavailable (seen for about "
+                     "30 seconds on the sandbox; nothing was written then)")
+        else:
+            cause = f"the server answered HTTP {status_code}"
+        super().__init__(status_code, response_body)
+        self.args = (
+            f"{operation}: {cause}. The change may be partly applied — read the "
+            f"schema again before retrying. Response: {response_body[:300]}",
+        )
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+class SchemaDesignError(ReportnetError):
+    """A schema change was refused by the client's own safety checks.
+
+    Nothing was sent to Reportnet. The message says why and, where one exists,
+    which argument overrides the check.
+    """
+
+
+class TableHasDataError(SchemaDesignError):
+    """The table holds records, so its definition must not change.
+
+    The web app locks such a table ("Delete the data first if you want to
+    modify the schema"), but the API accepts the change anyway (verified on
+    sandbox design dataset 33796, 2026-11-12). Pass ``force=True`` to override.
+    """
+
+    def __init__(self, table: str, records: int) -> None:
+        self.table = table
+        self.records = records
+        super().__init__(
+            f"Table {table!r} holds {records} record(s); Reportnet's web app locks its "
+            "definition until the data is deleted. Delete the data first, or pass "
+            "force=True if you are sure."
+        )
+
+
+class DuplicateNameError(SchemaDesignError):
+    """A table or field with this name already exists.
+
+    The API accepts duplicates (two "Sites" tables were created in one sandbox
+    dataset on 2026-11-12); the web app does not.
+    """
+
+
+class SchemaReadbackError(SchemaDesignError):
+    """A schema change was accepted, but reading the schema back shows otherwise.
+
+    The change may be partly applied. ``expected`` and ``actual`` hold the
+    properties that differ.
+    """
+
+    def __init__(self, operation: str, expected: dict[str, object],
+                 actual: dict[str, object]) -> None:
+        self.operation = operation
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"{operation} was accepted but the schema read back differs: "
+            f"expected {expected}, found {actual}. Read the schema before retrying."
+        )

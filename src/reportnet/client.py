@@ -17,12 +17,19 @@ from __future__ import annotations
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, Callable, Literal, Union
+from typing import IO, TYPE_CHECKING, Any, Callable, Literal, Mapping, Sequence, Union
+
+import httpx
 
 from ._http import HttpSession
 from ._log import get_logger
 from ._util import to_file_tuple
-from .exceptions import APIError
+from .exceptions import (
+    APIError,
+    AuthError,
+    SchemaDesignNotPermittedError,
+    SchemaWriteUncertainError,
+)
 from .jobs import JobHandle, JobStatus
 from .models import (
     Capabilities,
@@ -30,11 +37,13 @@ from .models import (
     DataflowInfo,
     DatasetSchema,
     ExportResult,
+    FieldType,
     JobRecord,
     OperationEvidence,
     ReferenceDataset,
     Reporter,
     ReportingDataset,
+    TableSchema,
     TestDataset,
 )
 
@@ -799,6 +808,267 @@ class ReportnetClient:
         response = self._http.get(f"/dataschema/v1/datasetId/{dataset_id}")
         return DatasetSchema.from_dict(response.json())
 
+    # ── Schema design (custodian; login token only) ────────────────────────────
+    #
+    # Verified on sandbox dataflow 11468, 2026-11-12. Every write below is
+    # refused (403) with an API key, so each one checks the credential first.
+    # Writes are never retried, and a 5xx becomes SchemaWriteUncertainError:
+    # a failed field update was seen to save its change anyway.
+
+    def _require_login_token(self, operation: str) -> None:
+        if self._auth is None:
+            raise SchemaDesignNotPermittedError(operation)
+
+    def _schema_write(
+        self, method: str, url: str, operation: str, **kwargs: Any
+    ) -> httpx.Response:
+        self._require_login_token(operation)
+        try:
+            return self._http._request(method, url, **kwargs)
+        except AuthError:
+            raise
+        except APIError as exc:
+            if exc.status_code >= 500:
+                raise SchemaWriteUncertainError(
+                    exc.status_code, exc.response_body, operation
+                ) from exc
+            raise
+
+    def create_empty_dataset_schema(self, *, dataflow_id: int, name: str) -> None:
+        """POST /dataschema/createEmptyDatasetSchema — add a design dataset.
+
+        The response body is empty: the new dataset's id is not returned. Find
+        it in ``designDatasets`` afterwards, or use
+        :meth:`DataflowClient.create_design_dataset
+        <reportnet.DataflowClient.create_design_dataset>`, which does that.
+        """
+        self._schema_write(
+            "POST", "/dataschema/createEmptyDatasetSchema", "create_empty_dataset_schema",
+            params={"dataflowId": dataflow_id, "datasetSchemaName": name},
+        )
+
+    def get_dataset_metabase(self, *, dataset_id: int) -> dict[str, Any]:
+        """GET /datasetmetabase/{datasetId} — dataset name, dataflow and schema id."""
+        return self._http.get(f"/datasetmetabase/{dataset_id}").json()  # type: ignore[no-any-return]
+
+    def update_dataset_name(self, *, dataset_id: int, name: str) -> None:
+        """PUT /datasetmetabase/updateDatasetName — rename a design dataset.
+
+        Renames both the dataset and its schema (``nameDatasetSchema``).
+        """
+        self._schema_write(
+            "PUT", "/datasetmetabase/updateDatasetName", "update_dataset_name",
+            params={"datasetId": dataset_id, "datasetName": name},
+        )
+
+    def update_dataset_schema(self, *, dataset_id: int, description: str) -> None:
+        """PUT /dataschema/{datasetId}/datasetSchema — set the dataset description."""
+        self._schema_write(
+            "PUT", f"/dataschema/{dataset_id}/datasetSchema", "update_dataset_schema",
+            json={"description": description},
+        )
+
+    def create_table_schema(
+        self, *, dataset_id: int, name: str, not_empty: bool = False, **props: Any
+    ) -> TableSchema:
+        """POST /dataschema/{datasetId}/tableSchema — add a table.
+
+        Returns the new table, including :attr:`TableSchema.record_id`, which
+        is what :meth:`create_field_schema` needs. Other table properties
+        (``description``, ``read_only``, ``to_prefill``, ``fixed_number``,
+        ``data_manually_editable``) can be passed as keywords.
+
+        The API accepts a duplicate name; check first.
+
+        Example::
+
+            table = client.create_table_schema(dataset_id=48097, name="Sites",
+                                               not_empty=True)
+        """
+        body = {"nameTableSchema": name, "notEmpty": not_empty, **_table_body(props)}
+        r = self._schema_write(
+            "POST", f"/dataschema/{dataset_id}/tableSchema", "create_table_schema", json=body
+        )
+        return TableSchema.from_dict(r.json())
+
+    def update_table_schema(
+        self, *, dataset_id: int, table_schema_id: str, **props: Any
+    ) -> None:
+        """PUT /dataschema/{datasetId}/tableSchema — change table properties.
+
+        A partial body is accepted here (unlike fields). Keywords: ``name``,
+        ``description``, ``not_empty``, ``read_only``, ``to_prefill``,
+        ``fixed_number``, ``data_manually_editable``.
+
+        Example::
+
+            client.update_table_schema(dataset_id=48097, table_schema_id=tid,
+                                       name="Sites2")
+        """
+        if not props:
+            raise ValueError("Pass at least one table property to change.")
+        body = {"idTableSchema": table_schema_id, **_table_body(props)}
+        self._schema_write(
+            "PUT", f"/dataschema/{dataset_id}/tableSchema", "update_table_schema", json=body
+        )
+
+    def order_table_schema(
+        self, *, dataset_id: int, table_schema_id: str, position: int
+    ) -> None:
+        """PUT /dataschema/{datasetId}/tableSchema/order — move a table (0-based)."""
+        self._schema_write(
+            "PUT", f"/dataschema/{dataset_id}/tableSchema/order", "order_table_schema",
+            json={"id": table_schema_id, "position": position},
+        )
+
+    def delete_table_schema(self, *, dataset_id: int, table_schema_id: str) -> None:
+        """DELETE /dataschema/{datasetId}/tableSchema/{id} — delete a table. No undo."""
+        self._schema_write(
+            "DELETE", f"/dataschema/{dataset_id}/tableSchema/{table_schema_id}",
+            "delete_table_schema",
+        )
+
+    def create_field_schema(
+        self,
+        *,
+        dataset_id: int,
+        record_id: str,
+        name: str,
+        type: FieldType | str,
+        description: str = "",
+        required: bool = False,
+        pk: bool = False,
+        read_only: bool = False,
+        codelist_items: Sequence[str] = (),
+        referenced_field: Mapping[str, str] | None = None,
+        max_size: int | None = None,
+    ) -> str:
+        """POST /dataschema/{datasetId}/fieldSchema — add a field; returns its id.
+
+        *record_id* is the table's :attr:`TableSchema.record_id`
+        (``recordSchema.idRecordSchema``), **not** the table id. The new id
+        comes back as ``text/plain``.
+
+        For a LINK field pass ``referenced_field={"idDatasetSchema": ...,
+        "idPk": ...}``: the schema id of the dataset holding the primary key,
+        and the primary-key field's id.
+
+        Example::
+
+            fid = client.create_field_schema(dataset_id=48097, record_id=rid,
+                                             name="SiteCode", type="TEXT",
+                                             pk=True, required=True)
+        """
+        body: dict[str, Any] = {
+            "codelistItems": list(codelist_items),
+            "description": description,
+            "maxSize": max_size,
+            "name": name,
+            "pk": pk,
+            "readOnly": read_only,
+            "referencedField": dict(referenced_field) if referenced_field else None,
+            "required": required,
+            "type": FieldType(type).value,
+            "idRecord": record_id,
+        }
+        r = self._schema_write(
+            "POST", f"/dataschema/{dataset_id}/fieldSchema", "create_field_schema", json=body
+        )
+        return r.text.strip().strip('"')
+
+    def update_field_schema(self, *, dataset_id: int, payload: Mapping[str, Any]) -> None:
+        """PUT /dataschema/{datasetId}/fieldSchema — replace a field definition.
+
+        Send the **whole** field. A partial body answered HTTP 500 on the
+        sandbox *and still saved the change*. Build *payload* with
+        :meth:`FieldSchema.to_update_payload`, which starts from the field as
+        read and changes only what you name.
+
+        Example::
+
+            field = client.get_schema(dataset_id=48097).table("Sites").field("SiteCode")
+            client.update_field_schema(
+                dataset_id=48097, payload=field.to_update_payload(description="Site code"))
+        """
+        missing = [k for k in ("id", "idRecord", "name", "type") if k not in payload]
+        if missing:
+            raise ValueError(
+                f"update_field_schema needs the whole field; missing {missing}. "
+                "Use FieldSchema.to_update_payload()."
+            )
+        self._schema_write(
+            "PUT", f"/dataschema/{dataset_id}/fieldSchema", "update_field_schema",
+            json=dict(payload),
+        )
+
+    def order_field_schema(
+        self, *, dataset_id: int, field_schema_id: str, position: int
+    ) -> None:
+        """PUT /dataschema/{datasetId}/fieldSchema/order — move a field in its table (0-based)."""
+        self._schema_write(
+            "PUT", f"/dataschema/{dataset_id}/fieldSchema/order", "order_field_schema",
+            json={"id": field_schema_id, "position": position},
+        )
+
+    def delete_field_schema(self, *, dataset_id: int, field_schema_id: str) -> None:
+        """DELETE /dataschema/{datasetId}/fieldSchema/{id} — delete a field. No undo."""
+        self._schema_write(
+            "DELETE", f"/dataschema/{dataset_id}/fieldSchema/{field_schema_id}",
+            "delete_field_schema",
+        )
+
+    def export_table_definition(
+        self, *, dataset_schema_id: str, dataset_id: int, table_schema_id: str
+    ) -> str:
+        """GET …/exportFieldSchemas — one table's field definitions as CSV text.
+
+        Columns: ``Field name, PK, Required, ReadOnly, Field description,
+        Field type, Extra information``; code-list items are joined with ``;``
+        in the last column.
+        """
+        r = self._http.get(
+            f"/dataschema/v1/{dataset_schema_id}/exportFieldSchemas",
+            params={"datasetId": dataset_id, "tableSchemaId": table_schema_id,
+                    "mimeType": "csv"},
+        )
+        return r.content.decode("utf-8-sig")
+
+    def export_schema_definitions(self, *, dataset_id: int) -> bytes:
+        """GET /dataschema/v1/dataset/{datasetId}/exportFieldSchemas — every table, as a ZIP.
+
+        Note the path takes the numeric dataset id; a schema id answers 400.
+        """
+        return self._http.get(f"/dataschema/v1/dataset/{dataset_id}/exportFieldSchemas").content
+
+    def list_schemas(self, *, dataflow_id: int) -> list[DatasetSchema]:
+        """GET /dataschema/getSchemas/dataflow/{id} — every schema in a dataflow.
+
+        The items carry no dataset id; join on :attr:`DatasetSchema.id` and
+        :attr:`DesignDataset.schema_id`. Login token only (403 for API keys).
+        """
+        self._require_login_token("list_schemas")
+        r = self._http.get(f"/dataschema/getSchemas/dataflow/{dataflow_id}")
+        return [DatasetSchema.from_dict(d) for d in r.json()]
+
+    def validate_schemas(self, *, dataflow_id: int) -> bool:
+        """GET /dataschema/validate/dataflow/{id} — True if every schema is valid."""
+        r = self._http.get(f"/dataschema/validate/dataflow/{dataflow_id}")
+        return r.text.strip().lower() == "true"
+
+    def count_table_records(self, *, dataset_id: int, table_schema_id: str) -> int:
+        """Number of records in one table of a **BigData** dataset.
+
+        Reads ``totalRecords`` from ``GET /dataset/TableValueDatasetDL/{id}``
+        with a page size of 1 — the call the web app makes per table. Verified
+        on a BigData sandbox dataflow only; Citus datasets have no ``DL`` route.
+        """
+        r = self._http.get(
+            f"/dataset/TableValueDatasetDL/{dataset_id}",
+            params={"idTableSchema": table_schema_id, "pageNum": 0, "pageSize": 1,
+                    "fieldValue": "", "levelError": "CORRECT,INFO,WARNING,ERROR,BLOCKER"},
+        )
+        return int(r.json().get("totalRecords") or 0)
+
     def set_reference_dataset_updatable(
         self,
         *,
@@ -871,6 +1141,27 @@ class ReportnetClient:
             params["providerId"] = provider_id
         response = self._http.get(path, params=params)
         return response.json()  # type: ignore[no-any-return]
+
+
+# Python keyword → wire name for table properties.
+_TABLE_PROPS = {
+    "name": "nameTableSchema",
+    "description": "description",
+    "not_empty": "notEmpty",
+    "read_only": "readOnly",
+    "to_prefill": "toPrefill",
+    "fixed_number": "fixedNumber",
+    "data_manually_editable": "dataAreManuallyEditable",
+}
+
+
+def _table_body(props: Mapping[str, Any]) -> dict[str, Any]:
+    unknown = set(props) - set(_TABLE_PROPS)
+    if unknown:
+        raise TypeError(
+            f"Unknown table properties {sorted(unknown)}; known: {sorted(_TABLE_PROPS)}"
+        )
+    return {_TABLE_PROPS[k]: v for k, v in props.items()}
 
 
 def _warn_on_records_without_country_code(tables: list[dict[str, Any]]) -> None:
