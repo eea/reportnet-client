@@ -44,6 +44,7 @@ from .models import (
 if TYPE_CHECKING:
     from ._util import CodelistResolution
     from .client import ReportnetClient
+    from .schema_design import SchemaDesigner
 
 logger = get_logger(__name__)
 
@@ -422,6 +423,59 @@ class DataflowClient:
                 print(r.name, "->", by_schema[r.schema_id].name)
         """
         return list(self.get_dataflow_contents().design_datasets)
+
+    def create_design_dataset(self, name: str) -> DesignDataset:
+        """Create an empty design dataset (schema) in this dataflow. **Admin.**
+
+        Needs a login token (:meth:`ReportnetClient.from_tokens
+        <reportnet.ReportnetClient.from_tokens>`); API keys get 403.
+
+        Reportnet does not return the new id, so this compares
+        ``designDatasets`` before and after. A name already in use is refused
+        first: the result could not be told apart otherwise.
+
+        Example::
+
+            ds = flow.create_design_dataset("Sites and measurements")
+            designer = flow.design(ds.id)
+        """
+        from .exceptions import DuplicateNameError, SchemaReadbackError
+
+        before = self.get_design_datasets()
+        if any(d.name.casefold() == name.casefold() for d in before):
+            raise DuplicateNameError(
+                f"Dataflow {self._dataflow_id} already has a design dataset named {name!r}."
+            )
+        self._client.create_empty_dataset_schema(dataflow_id=self._dataflow_id, name=name)
+        known = {d.id for d in before}
+        new = [d for d in self.get_design_datasets() if d.id not in known and d.name == name]
+        if len(new) != 1:
+            raise SchemaReadbackError(
+                "create_design_dataset", {"new datasets named " + repr(name): 1},
+                {"new datasets named " + repr(name): len(new)},
+            )
+        logger.info("created design dataset %r (%s)", name, new[0].id)
+        return new[0]
+
+    def design(
+        self, dataset_id: int, *, allow_after_data_collection: bool = False
+    ) -> "SchemaDesigner":
+        """Return a :class:`~reportnet.SchemaDesigner` for one design dataset. **Admin.**
+
+        Refuses an API-key client, a dataset that is not a design dataset of
+        this dataflow, and — unless *allow_after_data_collection* — a design
+        dataset whose schema already has a data collection or reporting
+        datasets. Other schemas in the same dataflow do not count.
+
+        Example::
+
+            designer = flow.design(48097)
+            sites = designer.add_table("Sites", mandatory=True)
+        """
+        from .schema_design import SchemaDesigner
+        return SchemaDesigner(
+            self, dataset_id, allow_after_data_collection=allow_after_data_collection
+        )
 
     def get_test_datasets(self) -> list[TestDataset]:
         """Return all test datasets for this dataflow.

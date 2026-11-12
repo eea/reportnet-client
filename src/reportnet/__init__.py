@@ -1,6 +1,7 @@
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _version
 
+from ._auth import TokenAuth, TokenPair
 from ._util import cast_frame, table_to_frame, to_geodataframe
 from .client import PRODUCTION_URL, SANDBOX_URL, ReportnetClient
 from .dataflow import DataflowClient
@@ -11,12 +12,18 @@ from .exceptions import (
     DataflowNotPublicError,
     DatasetLockedError,
     DiscoveryNotPermittedError,
+    DuplicateNameError,
     ExportVerificationError,
     JobFailedError,
     JobTimeoutError,
     RateLimitError,
     ReadbackVerificationError,
     ReportnetError,
+    SchemaDesignError,
+    SchemaDesignNotPermittedError,
+    SchemaReadbackError,
+    SchemaWriteUncertainError,
+    TableHasDataError,
 )
 from .interactive import connect_interactive
 from .jobs import JobHandle, JobStatus
@@ -50,6 +57,7 @@ from .public_schema import (
     QcRule,
     get_public_schema,
 )
+from .schema_design import SchemaDesigner
 from .viz import dataflow_to_mermaid
 
 try:
@@ -70,6 +78,9 @@ __all__ = [
     "ReadbackVerificationError",
     "ReportnetClient",
     "DataflowClient",
+    "SchemaDesigner",
+    "TokenAuth",
+    "TokenPair",
     "connect_interactive",
     "dataflow_to_mermaid",
     "JobHandle",
@@ -101,6 +112,12 @@ __all__ = [
     "DatasetLockedError",
     "CodelistResolutionError",
     "DiscoveryNotPermittedError",
+    "DuplicateNameError",
+    "SchemaDesignError",
+    "SchemaDesignNotPermittedError",
+    "SchemaReadbackError",
+    "SchemaWriteUncertainError",
+    "TableHasDataError",
     "RateLimitError",
     "JobFailedError",
     "JobTimeoutError",
