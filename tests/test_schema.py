@@ -389,3 +389,101 @@ def test_get_schema_live():
     print(f"  required: {table.required_columns()}")
     assert "category" in table.required_columns()
     assert "cvalue" not in table.required_columns()
+
+
+def test_table_with_null_field_list_parses_as_empty():
+    # A table created a moment ago has `"fieldSchema": null` (seen live on
+    # sandbox 11468, 2026-11-12); iterating None raised TypeError.
+    from reportnet import TableSchema
+
+    table = TableSchema.from_dict({
+        "idTableSchema": "t1",
+        "nameTableSchema": "New",
+        "recordSchema": {"idRecordSchema": "r1", "fieldSchema": None},
+    })
+    assert table.fields == ()
+
+
+def test_table_with_null_record_schema_parses_as_empty():
+    from reportnet import TableSchema
+
+    table = TableSchema.from_dict(
+        {"idTableSchema": "t1", "nameTableSchema": "New", "recordSchema": None}
+    )
+    assert table.fields == ()
+
+
+# ── WP4: schema-design properties and full-body updates ───────────────────────
+
+LIVE_FIELD = {  # shape returned by GET /dataschema/v1/datasetId/48096, 2026-11-12
+    "id": "6af5b8f7c6dc4400014d1f25", "description": "helloworld",
+    "idRecord": "6af5b8cac6dc4400014d1f22", "name": "helloWorld", "type": "TEXT",
+    "codelistItems": [], "required": True, "pk": None, "pkReferenced": False,
+    "referencedField": None, "pkMustBeUsed": False, "pkHasMultipleValues": False,
+    "validExtensions": [], "maxSize": 100.0, "readOnly": False, "ignoreCaseInLinks": False,
+    "someFutureProperty": "kept",
+}
+
+
+def test_field_schema_parses_design_properties():
+    from reportnet import FieldSchema
+
+    f = FieldSchema.from_dict(LIVE_FIELD)
+    assert f.record_id == "6af5b8cac6dc4400014d1f22"
+    assert f.pk is False            # null pk reads as False
+    assert f.max_size == 100        # 100.0 float
+    assert FieldSchema.from_dict({**LIVE_FIELD, "maxSize": "100"}).max_size == 100
+    assert f.raw["someFutureProperty"] == "kept"
+
+
+def test_to_update_payload_changes_only_what_was_asked():
+    from reportnet import FieldSchema
+
+    payload = FieldSchema.from_dict(LIVE_FIELD).to_update_payload(description="new")
+    expected = {k: v for k, v in LIVE_FIELD.items() if k not in (
+        "pkReferenced", "pkMustBeUsed", "pkHasMultipleValues", "ignoreCaseInLinks")}
+    expected["description"] = "new"
+    assert payload == expected
+    assert payload["someFutureProperty"] == "kept"
+
+
+def test_to_update_payload_wire_names_and_types():
+    from reportnet import FieldSchema
+
+    p = FieldSchema.from_dict(LIVE_FIELD).to_update_payload(
+        read_only=True, codelist_items=("a", "b"), max_size=50, type="CODELIST")
+    assert p["readOnly"] is True
+    assert p["codelistItems"] == ["a", "b"]
+    assert p["maxSize"] == "50"     # the web app sends a string on PUT
+    assert p["type"] == "CODELIST"
+    with pytest.raises(TypeError):
+        FieldSchema.from_dict(LIVE_FIELD).to_update_payload(colour="red")
+
+
+def test_to_update_payload_does_not_mutate_raw():
+    from reportnet import FieldSchema
+
+    f = FieldSchema.from_dict(LIVE_FIELD)
+    f.to_update_payload(description="new")
+    assert f.raw["description"] == "helloworld"
+
+
+def test_table_and_dataset_design_properties():
+    from reportnet import DatasetSchema
+
+    schema = DatasetSchema.from_dict({
+        "idDataSetSchema": "s", "nameDatasetSchema": "N", "availableInPublic": True,
+        "referenceDataset": False, "webform": None, "tableSchemas": [{
+            "idTableSchema": "t", "nameTableSchema": "T", "readOnly": False,
+            "toPrefill": True, "notEmpty": True, "fixedNumber": False,
+            "dataAreManuallyEditable": True,
+            "recordSchema": {"idRecordSchema": "r", "fieldSchema": [LIVE_FIELD]},
+        }],
+    })
+    t = schema.table("T")
+    assert (t.record_id, t.not_empty, t.to_prefill, t.data_manually_editable) == (
+        "r", True, True, True)
+    assert t.field("helloWorld").id == LIVE_FIELD["id"]
+    with pytest.raises(KeyError):
+        t.field("nope")
+    assert schema.available_in_public is True
