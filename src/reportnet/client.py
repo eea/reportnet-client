@@ -45,7 +45,9 @@ if TYPE_CHECKING:
 
 
 PRODUCTION_URL = "https://api.reportnet.europa.eu"
-SANDBOX_URL = "https://sandbox.reportnet.europa.eu"
+# The sandbox *API* host. `sandbox.reportnet.europa.eu` is the web app and
+# answers API paths with text/html (verified 2026-11-12, dataflow 11468).
+SANDBOX_URL = "https://sandbox-api.reportnet.europa.eu"
 
 
 class ReportnetClient:
