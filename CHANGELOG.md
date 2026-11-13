@@ -12,6 +12,19 @@ they are always listed under **Changed** with a migration note.
 
 ### Added
 
+- **SQL QC rule editing for custodians.** `DataflowClient.qc()` (or
+  `SchemaDesigner.qc`) returns a `QcDesigner` that lists, adds, updates,
+  enables, disables and deletes SQL rules by short code. It reads each rule
+  back after every write. It refuses API-key clients, non-design datasets,
+  duplicate short codes, unknown severities, SQL that does not start with
+  `SELECT` or `WITH`, and edits to automatic or non-SQL rules. **Reportnet
+  does not check rule SQL through the API:** invalid SQL is accepted and marked
+  `verified: true`. Underneath there is one `ReportnetClient` method per
+  endpoint (`get_rules()`, `create_rule()`, `update_rule()`, `delete_rule()`,
+  `evaluate_sql_rule()`, `run_sql_rule()`, `validate_sql_rules()`,
+  `get_rule_history()`), plus the `RuleDefinition`, `RuleSet` and `Severity`
+  models.
+
 - **Schema design for custodians.** `DataflowClient.create_design_dataset()`
   and `DataflowClient.design()` return a `SchemaDesigner` that adds, changes,
   moves and deletes tables and fields, renames the dataset and sets its
@@ -36,6 +49,12 @@ they are always listed under **Changed** with a migration note.
 
 ### Fixed
 
+- A login token that can no longer be renewed now raises `LoginTokenError`
+  (a subclass of `AuthError`), and the message says to log in again.
+  Before, `DataflowClient.get_dataflow_contents()` reported it as
+  `DiscoveryNotPermittedError` with advice about scoping reporter keys, and
+  `capabilities()` and `is_big_dataflow()` misread it as a key role. Reportnet
+  answers an invalid refresh token with HTTP 500.
 - `SANDBOX_URL` pointed at `https://sandbox.reportnet.europa.eu`, the sandbox
   *web app*, which answers API paths with an HTML page. It is now
   `https://sandbox-api.reportnet.europa.eu`. This also fixes

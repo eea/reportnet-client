@@ -5,8 +5,9 @@ writes the quality rules, and manages the shared code lists. This page covers
 what the library gives you for that work.
 
 Everything here needs a **custodian key** — one generated from the custodian view
-of the dataflow. Check with `flow.capabilities().role`. The one exception is
-[designing schemas](#designing-schemas), which needs your **login token**
+of the dataflow. Check with `flow.capabilities().role`. The exceptions are
+[designing schemas](#designing-schemas) and
+[writing SQL QC rules](#writing-sql-qc-rules), which need your **login token**
 instead of a key.
 
 ## See the whole dataflow
@@ -101,8 +102,8 @@ November 2026). The public download only works for published dataflows: a
 private one, including a private test copy of a public dataflow, raises
 `DataflowNotPublicError`.
 
-Writing rules is still web-UI only. `createNewRule` and `updateRule` exist in
-Reportnet's source but are not reachable with an API key.
+To add, change or delete **SQL** rules from Python, see
+[Writing SQL QC rules](#writing-sql-qc-rules). It needs a login token too.
 
 ## Designing schemas
 
@@ -174,6 +175,76 @@ Not yet possible from Python: deleting a whole design dataset, importing a
 table definition, copying schemas between dataflows, and the dataset's
 "reference dataset" and "public" settings. Use the web app for these.
 
+## Writing SQL QC rules
+
+You can list, add, change, switch on and off, and delete the **SQL** quality
+rules of a design dataset. It needs a [login token](#get-a-login-token), as
+schema design does.
+
+```python
+flow = client.for_dataflow(11468)
+qc = flow.qc(48100)                 # or designer.qc, from flow.design(48100)
+
+for rule in qc.rules(sql_only=True):
+    print(rule.short_code, rule.severity, rule.enabled, rule.sql)
+
+qc.add_sql_rule(
+    "SITE01", name="Site code present", on="Sites",
+    sql='SELECT * FROM dataset_48100."sites" WHERE sitecode IS NULL',
+    message="Every site needs a code", severity="ERROR")
+
+qc.update_rule("SITE01", sql='SELECT * FROM dataset_48100."sites" '
+                             "WHERE sitecode IS NULL OR sitecode = ''")
+qc.update_rule("SITE01", message="Site code is missing", severity="BLOCKER")
+qc.disable("SITE01")
+qc.enable("SITE01")
+qc.delete_rule("SITE01")
+```
+
+Rules are addressed by their **short code** (upper or lower case), because
+Reportnet returns no id when it creates one. `on` decides what the rule
+checks:
+
+| `on=` | Rule type |
+|---|---|
+| a table name, or a `TableSchema` | TABLE |
+| the same, with `record=True` | RECORD |
+| `("Table", "Field")`, or a `FieldSchema` | FIELD |
+
+Severity is one of `BLOCKER`, `ERROR`, `WARNING` and `INFO` (or
+`reportnet.Severity`). Every write reads the rule back and returns it as
+Reportnet now holds it; if that differs, it raises `SchemaReadbackError`.
+
+### Reportnet does not check your SQL
+
+**Through the API, Reportnet accepts rule SQL with a syntax error or an unknown
+table, and "validate all" then marks it `verified: true`** (sandbox, November
+2026). The only checks are the client's own: the SQL must start with `SELECT`
+or `WITH`, and the severity must be known. Write the SQL in the web app's rule
+editor first, or run a validation on a test dataset with data, before you rely
+on a rule.
+
+`qc.validate_all()` asks Reportnet to re-check every SQL rule of the dataset.
+It runs in the background, and `verified` only says that it ran.
+`qc.test_sql(sql)` test-runs a query, but it is not verified: Reportnet's own
+query wrapper fails on any dataset with a column named like an SQL keyword
+(such as `Group`).
+
+### What the QC designer refuses
+
+| It refuses | Because |
+|---|---|
+| A client made with an API key | the `/rules/` endpoints refuse API keys |
+| A dataset that is not a design dataset of this dataflow | rules belong to design datasets |
+| A short code already in use (any case) | rules are found by short code |
+| SQL that does not start with `SELECT` or `WITH` (`QcSqlError`) | Reportnet does not check it |
+| An unknown severity | the web app offers only these four |
+| Changing an automatic rule, or an expression or relation rule (`QcRuleNotEditableError`) | they use other endpoints and bodies; change them in the web app |
+
+Not yet possible from Python: changing a rule's short code, or moving it to
+another table or field (delete it and add it again), and rule history
+(`get_rule_history()` answered an empty list on the sandbox).
+
 ## Reference data and code lists
 
 See [reference datasets](reference-datasets.md). The short version: they are
@@ -211,6 +282,7 @@ No undo. Check what is there first.
 | Import to a **reporter's** dataset | ❌ |
 | Import to the data collection | ❌ |
 | Change a schema | ❌ needs a [login token](#get-a-login-token) |
+| Read or write QC rules | ❌ needs a [login token](#get-a-login-token) |
 
 A reporter's data can only be uploaded with that reporter's own key. There is no
 unlock for it — that is a permission boundary, not a lock. If you also report for

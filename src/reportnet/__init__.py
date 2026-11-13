@@ -16,6 +16,9 @@ from .exceptions import (
     ExportVerificationError,
     JobFailedError,
     JobTimeoutError,
+    LoginTokenError,
+    QcRuleNotEditableError,
+    QcSqlError,
     RateLimitError,
     ReadbackVerificationError,
     ReportnetError,
@@ -45,6 +48,9 @@ from .models import (
     ReferenceDataset,
     Reporter,
     ReportingDataset,
+    RuleDefinition,
+    RuleSet,
+    Severity,
     SubmissionResult,
     TableSchema,
     TestDataset,
@@ -57,6 +63,7 @@ from .public_schema import (
     QcRule,
     get_public_schema,
 )
+from .qc_design import QcDesigner
 from .schema_design import SchemaDesigner
 from .viz import dataflow_to_mermaid
 
@@ -90,6 +97,9 @@ __all__ = [
     "DataflowInfo",
     "Reporter",
     "ReportingDataset",
+    "RuleDefinition",
+    "RuleSet",
+    "Severity",
     "ReferenceDataset",
     "TestDataset",
     "DataCollection",
@@ -114,6 +124,10 @@ __all__ = [
     "DiscoveryNotPermittedError",
     "DuplicateNameError",
     "SchemaDesignError",
+    "LoginTokenError",
+    "QcDesigner",
+    "QcRuleNotEditableError",
+    "QcSqlError",
     "SchemaDesignNotPermittedError",
     "SchemaReadbackError",
     "SchemaWriteUncertainError",

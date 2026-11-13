@@ -29,6 +29,11 @@ Plain frozen dataclasses that parse API responses. They perform no network I/O
 
 ::: reportnet.FieldType
 
+## QC rules
+
+`RuleDefinition`, `RuleSet` and `Severity` are documented with the
+[QC rules](qc-design.md) designer.
+
 ## Validation results
 
 ::: reportnet.ValidationResult

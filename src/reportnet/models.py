@@ -1124,3 +1124,116 @@ class SubmissionResult:
     @property
     def ready_for_review(self) -> bool:
         return self.export.verification.ok and self.readback.ok and self.validation.ok
+
+
+# ── QC rule models ────────────────────────────────────────────────────────────
+
+class Severity(str, Enum):
+    """Level of a QC rule's message (``thenCondition[1]``).
+
+    ``(str, Enum)`` rather than ``StrEnum``: the library supports Python 3.10.
+    """
+
+    BLOCKER = "BLOCKER"
+    ERROR = "ERROR"
+    WARNING = "WARNING"
+    INFO = "INFO"
+
+
+# The keys the web app sends when it creates or updates an SQL rule. Exactly
+# this body was accepted by createNewRule and updateRule on the sandbox
+# (2026-11-13); the extra keys GET returns (salience, hasHistoric, …) were
+# never sent, so to_body() leaves them out.
+_RULE_BODY_KEYS = ("ruleId", "automatic", "enabled", "type", "referenceId", "ruleName",
+                   "shortCode", "description", "expressionText", "sqlSentence",
+                   "thenCondition", "whenCondition")
+
+
+@dataclass(frozen=True)
+class RuleDefinition:
+    """One QC rule of a design dataset, as ``GET /rules/{schemaId}/dataflow/{id}`` lists it.
+
+    Not :class:`~reportnet.QcRule`, which is parsed from the public schema
+    spreadsheet and has different fields.
+    """
+
+    id: str                      # ruleId
+    name: str                    # ruleName
+    short_code: str              # shortCode
+    description: str
+    type: str                    # FIELD | RECORD | TABLE | DATASET
+    reference_id: str            # referenceId: field, record or table schema id
+    sql: str | None              # sqlSentence; "" means no SQL
+    message: str                 # thenCondition[0]
+    severity: str                # thenCondition[1]
+    enabled: bool
+    automatic: bool
+    verified: bool | None        # null until "validate all SQL rules" has run
+    sql_error: str | None
+    sql_cost: float | None
+    raw: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
+
+    @property
+    def is_sql(self) -> bool:
+        """True for a rule whose logic is an SQL sentence."""
+        return bool(self.sql)
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "RuleDefinition":
+        then = list(d.get("thenCondition") or [])
+        then += [""] * (2 - len(then))
+        cost = d.get("sqlCost")
+        verified = d.get("verified")
+        return cls(
+            id=str(d.get("ruleId") or ""),
+            name=d.get("ruleName") or "",
+            short_code=d.get("shortCode") or "",
+            description=d.get("description") or "",
+            type=d.get("type") or "",
+            reference_id=d.get("referenceId") or "",
+            sql=d.get("sqlSentence") or None,
+            message=str(then[0] or ""),
+            severity=str(then[1] or ""),
+            enabled=bool(d.get("enabled")),
+            automatic=bool(d.get("automatic")),
+            verified=None if verified is None else bool(verified),
+            sql_error=d.get("sqlError") or None,
+            sql_cost=None if cost is None else float(cost),
+            raw=dict(d),
+        )
+
+    def to_body(self, **changes: Any) -> dict[str, Any]:
+        """The create/update body the web app sends, with *changes* applied.
+
+        Keys are the API's (``ruleName``, ``sqlSentence``, ``thenCondition``, …).
+        A TABLE rule also gets ``"integrityVO": null``, as in the web app.
+        """
+        body: dict[str, Any] = {k: self.raw.get(k) for k in _RULE_BODY_KEYS}
+        if self.type == "TABLE" or changes.get("type") == "TABLE":
+            body["integrityVO"] = None
+        body.update(changes)
+        return body
+
+
+@dataclass(frozen=True)
+class RuleSet:
+    """All QC rules of one dataset schema."""
+
+    schema_id: str               # idDatasetSchema
+    rules_schema_id: str         # rulesSchemaId
+    rules: tuple[RuleDefinition, ...]
+    default_automatic_severity: str = ""  # automaticQCsDefaultLevelError
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "RuleSet":
+        return cls(
+            schema_id=d.get("idDatasetSchema") or "",
+            rules_schema_id=d.get("rulesSchemaId") or "",
+            rules=tuple(RuleDefinition.from_dict(r) for r in d.get("rules") or []),
+            default_automatic_severity=d.get("automaticQCsDefaultLevelError") or "",
+        )
+
+    def by_short_code(self, short_code: str) -> RuleDefinition | None:
+        """The rule with this short code (case-insensitive), or None."""
+        wanted = short_code.casefold()
+        return next((r for r in self.rules if r.short_code.casefold() == wanted), None)

@@ -1,0 +1,646 @@
+{
+  "run_at": "2026-11-13T13:40:49+00:00",
+  "dataflow_id": 11468,
+  "dataset_id": 48100,
+  "short_code": "RNCLIENT_PROBE",
+  "outcome": "completed",
+  "steps": [
+    {
+      "step": "list rules",
+      "method": "GET",
+      "path": "/rules/6af5cce0c6dc4400014d1f72/dataflow/11468",
+      "params": null,
+      "sent": null,
+      "status": 200,
+      "answer": {
+        "rulesSchemaId": "6af5cce0c6dc4400014d1f73",
+        "idDatasetSchema": "6af5cce0c6dc4400014d1f72",
+        "rules": [
+          {
+            "ruleId": "6af70eaba7dcca00018c59f5",
+            "referenceId": "6af70eabc6dc4400014ec640",
+            "ruleName": "Field cardinality",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "FIELD",
+            "whenCondition": null,
+            "thenCondition": [
+              "The value must not be missing or empty",
+              "ERROR"
+            ],
+            "description": "Checks if the field is missing or empty",
+            "shortCode": "FC10",
+            "automaticType": "FIELD_CARDINALITY",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isBlank(value)",
+            "referenceFieldSchemaPKId": null
+          },
+          {
+            "ruleId": "6af70eaba7dcca00018c59f6",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "Table type uniqueConstraint",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "Uniqueness and multiplicity constraints - The field SiteCode is unique within table",
+              "ERROR"
+            ],
+            "description": "Checks if SiteCode is unique within table",
+            "shortCode": "TU12",
+            "automaticType": "TABLE_UNIQUENESS",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isUniqueConstraint('6af70eabc6dc4400014ec641','6af70eaba7dcca00018c59f6')",
+            "referenceFieldSchemaPKId": "6af70eaac6dc4400014ec63e"
+          }
+        ],
+        "automaticQCsDefaultLevelError": "ERROR"
+      }
+    },
+    {
+      "step": "create RNCLIENT_PROBE_SYNTAX",
+      "method": "PUT",
+      "path": "/rules/createNewRule",
+      "params": {
+        "datasetId": 48100
+      },
+      "sent": {
+        "automatic": false,
+        "enabled": true,
+        "type": "TABLE",
+        "referenceId": "6af70eaac6dc4400014ec63e",
+        "ruleName": "rnclient probe",
+        "shortCode": "RNCLIENT_PROBE_SYNTAX",
+        "description": "Temporary rule from scripts/probe_qc_rules.py",
+        "expressionText": null,
+        "sqlSentence": "SELECT * FROM dataset_48100.\"sites\" WHERE",
+        "thenCondition": [
+          "rnclient probe message",
+          "INFO"
+        ],
+        "whenCondition": null,
+        "integrityVO": null
+      },
+      "status": 200,
+      "answer": null
+    },
+    {
+      "step": "create RNCLIENT_PROBE_NOTABLE",
+      "method": "PUT",
+      "path": "/rules/createNewRule",
+      "params": {
+        "datasetId": 48100
+      },
+      "sent": {
+        "automatic": false,
+        "enabled": true,
+        "type": "TABLE",
+        "referenceId": "6af70eaac6dc4400014ec63e",
+        "ruleName": "rnclient probe",
+        "shortCode": "RNCLIENT_PROBE_NOTABLE",
+        "description": "Temporary rule from scripts/probe_qc_rules.py",
+        "expressionText": null,
+        "sqlSentence": "SELECT * FROM dataset_48100.\"no_such_table\"",
+        "thenCondition": [
+          "rnclient probe message",
+          "INFO"
+        ],
+        "whenCondition": null,
+        "integrityVO": null
+      },
+      "status": 200,
+      "answer": null
+    },
+    {
+      "step": "list rules",
+      "method": "GET",
+      "path": "/rules/6af5cce0c6dc4400014d1f72/dataflow/11468",
+      "params": null,
+      "sent": null,
+      "status": 200,
+      "answer": {
+        "rulesSchemaId": "6af5cce0c6dc4400014d1f73",
+        "idDatasetSchema": "6af5cce0c6dc4400014d1f72",
+        "rules": [
+          {
+            "ruleId": "6af70eaba7dcca00018c59f5",
+            "referenceId": "6af70eabc6dc4400014ec640",
+            "ruleName": "Field cardinality",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "FIELD",
+            "whenCondition": null,
+            "thenCondition": [
+              "The value must not be missing or empty",
+              "ERROR"
+            ],
+            "description": "Checks if the field is missing or empty",
+            "shortCode": "FC10",
+            "automaticType": "FIELD_CARDINALITY",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isBlank(value)",
+            "referenceFieldSchemaPKId": null
+          },
+          {
+            "ruleId": "6af70eaba7dcca00018c59f6",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "Table type uniqueConstraint",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "Uniqueness and multiplicity constraints - The field SiteCode is unique within table",
+              "ERROR"
+            ],
+            "description": "Checks if SiteCode is unique within table",
+            "shortCode": "TU12",
+            "automaticType": "TABLE_UNIQUENESS",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isUniqueConstraint('6af70eabc6dc4400014ec641','6af70eaba7dcca00018c59f6')",
+            "referenceFieldSchemaPKId": "6af70eaac6dc4400014ec63e"
+          },
+          {
+            "ruleId": "6af7135fa7dcca00018c59f8",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "rnclient probe",
+            "automatic": false,
+            "enabled": true,
+            "verified": null,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "rnclient probe message",
+              "INFO"
+            ],
+            "description": "Temporary rule from scripts/probe_qc_rules.py",
+            "shortCode": "RNCLIENT_PROBE_SYNTAX",
+            "automaticType": null,
+            "integrityVO": null,
+            "sqlSentence": "SELECT * FROM dataset_48100.\"sites\" WHERE",
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isSQLSentenceWithCode(this.datasetId.id, '6af7135fa7dcca00018c59f8', this.records.size > 0 && this.records.get(0) != null && this.records.get(0).dataProviderCode != null ? this.records.get(0).dataProviderCode : 'XX')",
+            "referenceFieldSchemaPKId": null
+          },
+          {
+            "ruleId": "6af7135fa7dcca00018c59f9",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "rnclient probe",
+            "automatic": false,
+            "enabled": true,
+            "verified": null,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "rnclient probe message",
+              "INFO"
+            ],
+            "description": "Temporary rule from scripts/probe_qc_rules.py",
+            "shortCode": "RNCLIENT_PROBE_NOTABLE",
+            "automaticType": null,
+            "integrityVO": null,
+            "sqlSentence": "SELECT * FROM dataset_48100.\"no_such_table\"",
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isSQLSentenceWithCode(this.datasetId.id, '6af7135fa7dcca00018c59f9', this.records.size > 0 && this.records.get(0) != null && this.records.get(0).dataProviderCode != null ? this.records.get(0).dataProviderCode : 'XX')",
+            "referenceFieldSchemaPKId": null
+          }
+        ],
+        "automaticQCsDefaultLevelError": "ERROR"
+      }
+    },
+    {
+      "step": "validate all SQL rules",
+      "method": "POST",
+      "path": "/rules/validateSqlRules",
+      "params": {
+        "datasetId": 48100,
+        "datasetSchemaId": "6af5cce0c6dc4400014d1f72"
+      },
+      "sent": null,
+      "status": 200,
+      "answer": null
+    },
+    {
+      "step": "list rules",
+      "method": "GET",
+      "path": "/rules/6af5cce0c6dc4400014d1f72/dataflow/11468",
+      "params": null,
+      "sent": null,
+      "status": 200,
+      "answer": {
+        "rulesSchemaId": "6af5cce0c6dc4400014d1f73",
+        "idDatasetSchema": "6af5cce0c6dc4400014d1f72",
+        "rules": [
+          {
+            "ruleId": "6af70eaba7dcca00018c59f5",
+            "referenceId": "6af70eabc6dc4400014ec640",
+            "ruleName": "Field cardinality",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "FIELD",
+            "whenCondition": null,
+            "thenCondition": [
+              "The value must not be missing or empty",
+              "ERROR"
+            ],
+            "description": "Checks if the field is missing or empty",
+            "shortCode": "FC10",
+            "automaticType": "FIELD_CARDINALITY",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isBlank(value)",
+            "referenceFieldSchemaPKId": null
+          },
+          {
+            "ruleId": "6af70eaba7dcca00018c59f6",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "Table type uniqueConstraint",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "Uniqueness and multiplicity constraints - The field SiteCode is unique within table",
+              "ERROR"
+            ],
+            "description": "Checks if SiteCode is unique within table",
+            "shortCode": "TU12",
+            "automaticType": "TABLE_UNIQUENESS",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isUniqueConstraint('6af70eabc6dc4400014ec641','6af70eaba7dcca00018c59f6')",
+            "referenceFieldSchemaPKId": "6af70eaac6dc4400014ec63e"
+          },
+          {
+            "ruleId": "6af7135fa7dcca00018c59f8",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "rnclient probe",
+            "automatic": false,
+            "enabled": true,
+            "verified": null,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "rnclient probe message",
+              "INFO"
+            ],
+            "description": "Temporary rule from scripts/probe_qc_rules.py",
+            "shortCode": "RNCLIENT_PROBE_SYNTAX",
+            "automaticType": null,
+            "integrityVO": null,
+            "sqlSentence": "SELECT * FROM dataset_48100.\"sites\" WHERE",
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isSQLSentenceWithCode(this.datasetId.id, '6af7135fa7dcca00018c59f8', this.records.size > 0 && this.records.get(0) != null && this.records.get(0).dataProviderCode != null ? this.records.get(0).dataProviderCode : 'XX')",
+            "referenceFieldSchemaPKId": null
+          },
+          {
+            "ruleId": "6af7135fa7dcca00018c59f9",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "rnclient probe",
+            "automatic": false,
+            "enabled": true,
+            "verified": null,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "rnclient probe message",
+              "INFO"
+            ],
+            "description": "Temporary rule from scripts/probe_qc_rules.py",
+            "shortCode": "RNCLIENT_PROBE_NOTABLE",
+            "automaticType": null,
+            "integrityVO": null,
+            "sqlSentence": "SELECT * FROM dataset_48100.\"no_such_table\"",
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isSQLSentenceWithCode(this.datasetId.id, '6af7135fa7dcca00018c59f9', this.records.size > 0 && this.records.get(0) != null && this.records.get(0).dataProviderCode != null ? this.records.get(0).dataProviderCode : 'XX')",
+            "referenceFieldSchemaPKId": null
+          }
+        ],
+        "automaticQCsDefaultLevelError": "ERROR"
+      }
+    },
+    {
+      "step": "list rules",
+      "method": "GET",
+      "path": "/rules/6af5cce0c6dc4400014d1f72/dataflow/11468",
+      "params": null,
+      "sent": null,
+      "status": 200,
+      "answer": {
+        "rulesSchemaId": "6af5cce0c6dc4400014d1f73",
+        "idDatasetSchema": "6af5cce0c6dc4400014d1f72",
+        "rules": [
+          {
+            "ruleId": "6af70eaba7dcca00018c59f5",
+            "referenceId": "6af70eabc6dc4400014ec640",
+            "ruleName": "Field cardinality",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "FIELD",
+            "whenCondition": null,
+            "thenCondition": [
+              "The value must not be missing or empty",
+              "ERROR"
+            ],
+            "description": "Checks if the field is missing or empty",
+            "shortCode": "FC10",
+            "automaticType": "FIELD_CARDINALITY",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isBlank(value)",
+            "referenceFieldSchemaPKId": null
+          },
+          {
+            "ruleId": "6af70eaba7dcca00018c59f6",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "Table type uniqueConstraint",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "Uniqueness and multiplicity constraints - The field SiteCode is unique within table",
+              "ERROR"
+            ],
+            "description": "Checks if SiteCode is unique within table",
+            "shortCode": "TU12",
+            "automaticType": "TABLE_UNIQUENESS",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isUniqueConstraint('6af70eabc6dc4400014ec641','6af70eaba7dcca00018c59f6')",
+            "referenceFieldSchemaPKId": "6af70eaac6dc4400014ec63e"
+          },
+          {
+            "ruleId": "6af7135fa7dcca00018c59f8",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "rnclient probe",
+            "automatic": false,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "rnclient probe message",
+              "INFO"
+            ],
+            "description": "Temporary rule from scripts/probe_qc_rules.py",
+            "shortCode": "RNCLIENT_PROBE_SYNTAX",
+            "automaticType": null,
+            "integrityVO": null,
+            "sqlSentence": "SELECT * FROM dataset_48100.\"sites\" WHERE",
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isSQLSentenceWithCode(this.datasetId.id, '6af7135fa7dcca00018c59f8', this.records.size > 0 && this.records.get(0) != null && this.records.get(0).dataProviderCode != null ? this.records.get(0).dataProviderCode : 'XX')",
+            "referenceFieldSchemaPKId": null
+          },
+          {
+            "ruleId": "6af7135fa7dcca00018c59f9",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "rnclient probe",
+            "automatic": false,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "rnclient probe message",
+              "INFO"
+            ],
+            "description": "Temporary rule from scripts/probe_qc_rules.py",
+            "shortCode": "RNCLIENT_PROBE_NOTABLE",
+            "automaticType": null,
+            "integrityVO": null,
+            "sqlSentence": "SELECT * FROM dataset_48100.\"no_such_table\"",
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isSQLSentenceWithCode(this.datasetId.id, '6af7135fa7dcca00018c59f9', this.records.size > 0 && this.records.get(0) != null && this.records.get(0).dataProviderCode != null ? this.records.get(0).dataProviderCode : 'XX')",
+            "referenceFieldSchemaPKId": null
+          }
+        ],
+        "automaticQCsDefaultLevelError": "ERROR"
+      }
+    },
+    {
+      "step": "delete rule (dataset id)",
+      "method": "DELETE",
+      "path": "/rules/deleteRule",
+      "params": {
+        "datasetId": 48100,
+        "ruleId": "6af7135fa7dcca00018c59f8"
+      },
+      "sent": null,
+      "status": 200,
+      "answer": null
+    },
+    {
+      "step": "delete rule (dataset id)",
+      "method": "DELETE",
+      "path": "/rules/deleteRule",
+      "params": {
+        "datasetId": 48100,
+        "ruleId": "6af7135fa7dcca00018c59f9"
+      },
+      "sent": null,
+      "status": 200,
+      "answer": null
+    },
+    {
+      "step": "list rules",
+      "method": "GET",
+      "path": "/rules/6af5cce0c6dc4400014d1f72/dataflow/11468",
+      "params": null,
+      "sent": null,
+      "status": 200,
+      "answer": {
+        "rulesSchemaId": "6af5cce0c6dc4400014d1f73",
+        "idDatasetSchema": "6af5cce0c6dc4400014d1f72",
+        "rules": [
+          {
+            "ruleId": "6af70eaba7dcca00018c59f5",
+            "referenceId": "6af70eabc6dc4400014ec640",
+            "ruleName": "Field cardinality",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "FIELD",
+            "whenCondition": null,
+            "thenCondition": [
+              "The value must not be missing or empty",
+              "ERROR"
+            ],
+            "description": "Checks if the field is missing or empty",
+            "shortCode": "FC10",
+            "automaticType": "FIELD_CARDINALITY",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isBlank(value)",
+            "referenceFieldSchemaPKId": null
+          },
+          {
+            "ruleId": "6af70eaba7dcca00018c59f6",
+            "referenceId": "6af70eaac6dc4400014ec63e",
+            "ruleName": "Table type uniqueConstraint",
+            "automatic": true,
+            "enabled": true,
+            "verified": true,
+            "salience": null,
+            "activationGroup": null,
+            "type": "TABLE",
+            "whenCondition": null,
+            "thenCondition": [
+              "Uniqueness and multiplicity constraints - The field SiteCode is unique within table",
+              "ERROR"
+            ],
+            "description": "Checks if SiteCode is unique within table",
+            "shortCode": "TU12",
+            "automaticType": "TABLE_UNIQUENESS",
+            "integrityVO": null,
+            "sqlSentence": null,
+            "sqlError": null,
+            "expressionText": null,
+            "sqlCost": null,
+            "hasHistoric": false,
+            "whenConditionMethod": "isUniqueConstraint('6af70eabc6dc4400014ec641','6af70eaba7dcca00018c59f6')",
+            "referenceFieldSchemaPKId": "6af70eaac6dc4400014ec63e"
+          }
+        ],
+        "automaticQCsDefaultLevelError": "ERROR"
+      }
+    },
+    {
+      "step": "run SQL on 33796, lower case",
+      "method": "POST",
+      "path": "/rules/runSqlRule",
+      "params": {
+        "datasetId": 33796,
+        "showInternalFields": "false"
+      },
+      "sent": {
+        "sqlRule": "SELECT * FROM dataset_33796.\"categories\""
+      },
+      "status": 500,
+      "answer": {
+        "timestamp": 1794577248792,
+        "status": 500,
+        "error": "Internal Server Error",
+        "message": "StatementCallback; uncategorized SQLException for SQL [WITH Categories AS (SELECT Group,Depth,Code,Description FROM Categories),Notation_key AS (SELECT Description FROM Notation_key) SELECT * FROM (SELECT * FROM \"categories\") as userSelect LIMIT 10 OFFSET 0]; SQL state [null]; error code [0]; PARSE ERROR: Encountered \"Group\" at line 1, column 28.\nWas expecting one of:\n    <HINT_BEG> ...\n    \"STREAM\" ...\n    \"DISTINCT\" ...\n    \"ALL\" ...\n    \"*\" ...\n    \"+\" ...\n    \"-\" ...\n    \"NOT\" ...\n    \"EXISTS\" ...\n    <UNSIGNED_INTEGER_LITERAL> ...\n    <DECIMAL_NUMERIC_LITERAL> ...\n    <APPROX_NUMERIC_LITERAL> ...\n    <BINARY_STRING_LITERAL> ...\n    <PREFIXED_STRING_LITERAL> ...\n    <QUOTED_STRING> ...\n    <UNICODE_STRING_LITERAL> ...\n    \"TRUE\" ...\n    \"FALSE\" ...\n    \"UNKNOWN\" ...\n    \"NULL\" ...\n    <LBRACE_D> ...\n    <LBRACE_T> ...\n    <LBRACE_TS> ...\n    \"DATE\" ...\n    \"TIME\" ...\n    \"TIMESTAMP\" ...\n    \"INTERVAL\" ...\n    \"CONTAINS(\" ...\n    \"?\" ...\n    \"CAST\" ...\n    \"EXTRACT\" ...\n    \"POSITION\" ...\n    \"CONVERT\" ...\n    \"TRANSLATE\" ...\n    \"OVERLAY\" ...\n    \"FLOOR\" ...\n    \"CEIL\" ...\n    \"CEILING\" ...\n    \"SUBSTRING\" ...\n    \"TRIM\" ...\n    \"CLASSIFIER\" ...\n    \"MATCH_NUMBER\" ...\n    \"RUNNING\" ...\n    \"PREV\" ...\n    \"NEXT\" ...\n    \"JSON_EXISTS\" ...\n    \"JSON_VALUE\" ...\n    \"JSON_QUERY\" ...\n    \"JSON_OBJECT\" ...\n    \"JSON_OBJECTAGG\" ...\n    \"JSON_ARRAY\" ...\n    \"JSON_ARRAYAGG\" ...\n    <LBRACE_FN> ...\n    \"MULTISET\" ...\n    \"ARRAY\" ...\n    \"PERIOD\" ...\n    \"SPECIFIC\" ...\n    <IDENTIFIER> ...\n    <QUOTED_IDENTIFIER> ...\n    <BACK_QUOTED_IDENTIFIER> ...\n    <BRACKET_QUOTED_IDENTIFIER> ...\n    <UNICODE_QUOTED_IDENTIFIER> ...\n    \"ABS\" ...\n    \"AVG\" ...\n    \"CARDINALITY\" ...\n    \"CHAR_LENGTH\" ...\n    \"CHARACTER_LENGTH\" ...\n    \"COALESCE\" ...\n    \"COLLECT\" ...\n    \"COVAR_POP\" ...\n    \"COVAR_SAMP\" ...\n    \"CUME_DIST\" ...\n    \"COUNT\" ...\n    \"CURRENT_DATE\" ...\n    \"CURRENT_TIME\" ...\n    \"CURRENT_TIMESTAMP\" ...\n    \"DENSE_RANK\" ...\n    \"ELEMENT\" ...\n    \"EXP\" ...\n    \"FIRST_VALUE\" ...\n    \"FUSION\" ...\n    \"GROUPING\" ...\n    \"HOUR\" ...\n    \"LAG\" ...\n    \"LEAD\" ...\n    \"LEFT\" ...\n    \"LAST_VALUE\" ...\n    \"LN\" ...\n    \"LOCALTIME\" ...\n    \"LOCALTIMESTAMP\" ...\n    \"LOWER\" ...\n    \"MAX\" ...\n    \"MIN\" ...\n    \"MINUTE\" ...\n    \"MOD\" ...\n    \"MONTH\" ...\n    \"NTH_VALUE\" ...\n    \"NTILE\" ...\n    \"NULLIF\" ...\n    \"OCTET_LENGTH\" ...\n    \"PERCENT_RANK\" ...\n    \"PERCENTILE_CONT\" ...\n    \"PERCENTILE_DISC\" ...\n    \"POWER\" ...\n    \"RANK\" ...\n    \"REGR_SXX\" ...\n    \"REGR_SYY\" ...\n    \"RIGHT\" ...\n    \"ROW_NUMBER\" ...\n    \"SECOND\" ...\n    \"SQRT\" ...\n    \"STDDEV_POP\" ...\n    \"STDDEV_SAMP\" ...\n    \"SUM\" ...\n    \"UPPER\" ...\n    \"TRUNCATE\" ...\n    \"USER\" ...\n    \"VAR_POP\" ...\n    \"VAR_SAMP\" ...\n    \"YEAR\" ...\n    \"CURRENT_CATALOG\" ...\n    \"CURRENT_DEFAULT_TRANSFORM_GROUP\" ...\n    \"CURRENT_PATH\" ...\n    \"CURRENT_ROLE\" ...\n    \"CURRENT_SCHEMA\" ...\n    \"CURRENT_USER\" ...\n    \"SESSION_USER\" ...\n    \"SYSTEM_USER\" ...\n    \"NEW\" ...\n    \"CASE\" ...\n    \"CURRENT\" ...\n    \"CURSOR\" ...\n    \"ROW\" ...\n    \"(\" ...\n    \n\nstartLine 1\nstartColumn 28\nendLine 1\nendColumn 32\nSQL Query WITH Categories AS (SELECT Group,Depth,Code,Description FROM Categories),Notation_key AS (SELECT Description FROM Notation_key) SELECT * FROM (SELECT * FROM \"categories\") as userSelect LIMIT 10 OFFSET 0\n[redacted: server error id, internal host name and stack trace]",
+        "path": "/rules/runSqlRule"
+      }
+    },
+    {
+      "step": "run SQL on 33796, as named",
+      "method": "POST",
+      "path": "/rules/runSqlRule",
+      "params": {
+        "datasetId": 33796,
+        "showInternalFields": "false"
+      },
+      "sent": {
+        "sqlRule": "SELECT * FROM dataset_33796.\"Categories\""
+      },
+      "status": 500,
+      "answer": {
+        "timestamp": 1794577249801,
+        "status": 500,
+        "error": "Internal Server Error",
+        "message": "StatementCallback; uncategorized SQLException for SQL [WITH Categories AS (SELECT Group,Depth,Code,Description FROM Categories),Notation_key AS (SELECT Description FROM Notation_key) SELECT * FROM (SELECT * FROM \"Categories\") as userSelect LIMIT 10 OFFSET 0]; SQL state [null]; error code [0]; PARSE ERROR: Encountered \"Group\" at line 1, column 28.\nWas expecting one of:\n    <HINT_BEG> ...\n    \"STREAM\" ...\n    \"DISTINCT\" ...\n    \"ALL\" ...\n    \"*\" ...\n    \"+\" ...\n    \"-\" ...\n    \"NOT\" ...\n    \"EXISTS\" ...\n    <UNSIGNED_INTEGER_LITERAL> ...\n    <DECIMAL_NUMERIC_LITERAL> ...\n    <APPROX_NUMERIC_LITERAL> ...\n    <BINARY_STRING_LITERAL> ...\n    <PREFIXED_STRING_LITERAL> ...\n    <QUOTED_STRING> ...\n    <UNICODE_STRING_LITERAL> ...\n    \"TRUE\" ...\n    \"FALSE\" ...\n    \"UNKNOWN\" ...\n    \"NULL\" ...\n    <LBRACE_D> ...\n    <LBRACE_T> ...\n    <LBRACE_TS> ...\n    \"DATE\" ...\n    \"TIME\" ...\n    \"TIMESTAMP\" ...\n    \"INTERVAL\" ...\n    \"CONTAINS(\" ...\n    \"?\" ...\n    \"CAST\" ...\n    \"EXTRACT\" ...\n    \"POSITION\" ...\n    \"CONVERT\" ...\n    \"TRANSLATE\" ...\n    \"OVERLAY\" ...\n    \"FLOOR\" ...\n    \"CEIL\" ...\n    \"CEILING\" ...\n    \"SUBSTRING\" ...\n    \"TRIM\" ...\n    \"CLASSIFIER\" ...\n    \"MATCH_NUMBER\" ...\n    \"RUNNING\" ...\n    \"PREV\" ...\n    \"NEXT\" ...\n    \"JSON_EXISTS\" ...\n    \"JSON_VALUE\" ...\n    \"JSON_QUERY\" ...\n    \"JSON_OBJECT\" ...\n    \"JSON_OBJECTAGG\" ...\n    \"JSON_ARRAY\" ...\n    \"JSON_ARRAYAGG\" ...\n    <LBRACE_FN> ...\n    \"MULTISET\" ...\n    \"ARRAY\" ...\n    \"PERIOD\" ...\n    \"SPECIFIC\" ...\n    <IDENTIFIER> ...\n    <QUOTED_IDENTIFIER> ...\n    <BACK_QUOTED_IDENTIFIER> ...\n    <BRACKET_QUOTED_IDENTIFIER> ...\n    <UNICODE_QUOTED_IDENTIFIER> ...\n    \"ABS\" ...\n    \"AVG\" ...\n    \"CARDINALITY\" ...\n    \"CHAR_LENGTH\" ...\n    \"CHARACTER_LENGTH\" ...\n    \"COALESCE\" ...\n    \"COLLECT\" ...\n    \"COVAR_POP\" ...\n    \"COVAR_SAMP\" ...\n    \"CUME_DIST\" ...\n    \"COUNT\" ...\n    \"CURRENT_DATE\" ...\n    \"CURRENT_TIME\" ...\n    \"CURRENT_TIMESTAMP\" ...\n    \"DENSE_RANK\" ...\n    \"ELEMENT\" ...\n    \"EXP\" ...\n    \"FIRST_VALUE\" ...\n    \"FUSION\" ...\n    \"GROUPING\" ...\n    \"HOUR\" ...\n    \"LAG\" ...\n    \"LEAD\" ...\n    \"LEFT\" ...\n    \"LAST_VALUE\" ...\n    \"LN\" ...\n    \"LOCALTIME\" ...\n    \"LOCALTIMESTAMP\" ...\n    \"LOWER\" ...\n    \"MAX\" ...\n    \"MIN\" ...\n    \"MINUTE\" ...\n    \"MOD\" ...\n    \"MONTH\" ...\n    \"NTH_VALUE\" ...\n    \"NTILE\" ...\n    \"NULLIF\" ...\n    \"OCTET_LENGTH\" ...\n    \"PERCENT_RANK\" ...\n    \"PERCENTILE_CONT\" ...\n    \"PERCENTILE_DISC\" ...\n    \"POWER\" ...\n    \"RANK\" ...\n    \"REGR_SXX\" ...\n    \"REGR_SYY\" ...\n    \"RIGHT\" ...\n    \"ROW_NUMBER\" ...\n    \"SECOND\" ...\n    \"SQRT\" ...\n    \"STDDEV_POP\" ...\n    \"STDDEV_SAMP\" ...\n    \"SUM\" ...\n    \"UPPER\" ...\n    \"TRUNCATE\" ...\n    \"USER\" ...\n    \"VAR_POP\" ...\n    \"VAR_SAMP\" ...\n    \"YEAR\" ...\n    \"CURRENT_CATALOG\" ...\n    \"CURRENT_DEFAULT_TRANSFORM_GROUP\" ...\n    \"CURRENT_PATH\" ...\n    \"CURRENT_ROLE\" ...\n    \"CURRENT_SCHEMA\" ...\n    \"CURRENT_USER\" ...\n    \"SESSION_USER\" ...\n    \"SYSTEM_USER\" ...\n    \"NEW\" ...\n    \"CASE\" ...\n    \"CURRENT\" ...\n    \"CURSOR\" ...\n    \"ROW\" ...\n    \"(\" ...\n    \n\nstartLine 1\nstartColumn 28\nendLine 1\nendColumn 32\nSQL Query WITH Categories AS (SELECT Group,Depth,Code,Description FROM Categories),Notation_key AS (SELECT Description FROM Notation_key) SELECT * FROM (SELECT * FROM \"Categories\") as userSelect LIMIT 10 OFFSET 0\n[redacted: server error id, internal host name and stack trace]",
+        "path": "/rules/runSqlRule"
+      }
+    }
+  ]
+}

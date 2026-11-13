@@ -1,0 +1,14 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.0, pluggy-1.6.0 -- <repo>\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: <repo>
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.14.0, respx-0.23.1
+collecting ... collected 489 items / 488 deselected / 1 selected
+
+tests/test_qc_design_integration.py::test_qc_rule_full_cycle 
+  created RNCLIENT_IT_T150753 (6af719b9a7dcca00018c59fc)
+PASSED
+
+====================== 1 passed, 488 deselected in 4.43s ======================

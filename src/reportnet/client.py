@@ -43,6 +43,7 @@ from .models import (
     ReferenceDataset,
     Reporter,
     ReportingDataset,
+    RuleSet,
     TableSchema,
     TestDataset,
 )
@@ -299,7 +300,7 @@ class ReportnetClient:
         if cached is not None:
             return cached
 
-        from .exceptions import AuthError
+        from .exceptions import AuthError, LoginTokenError
 
         can_read_dataflow = False
         can_read_representatives = False
@@ -307,10 +308,14 @@ class ReportnetClient:
             self.get_dataflow_contents(dataflow_id=dataflow_id)
             can_read_dataflow = True
             can_read_representatives = True  # custodian keys can read both
+        except LoginTokenError:
+            raise  # a dead token pair says nothing about the role
         except AuthError:
             try:
                 self._http.get(f"/representative/v1/dataflow/{dataflow_id}")
                 can_read_representatives = True
+            except LoginTokenError:
+                raise
             except AuthError:
                 pass
 
@@ -446,13 +451,15 @@ class ReportnetClient:
 
         Cached per client — a dataflow never changes backend.
         """
-        from .exceptions import AuthError
+        from .exceptions import AuthError, LoginTokenError
 
         cached = self._big_data_cache.get(dataflow_id)
         if cached is not None:
             return cached
         try:
             cached = self.get_dataflow_contents(dataflow_id=dataflow_id).info.big_data
+        except LoginTokenError:
+            raise
         except AuthError:
             logger.debug(
                 "dataflow %s not readable; reading bigData from getmetabase instead",
@@ -1068,6 +1075,99 @@ class ReportnetClient:
                     "fieldValue": "", "levelError": "CORRECT,INFO,WARNING,ERROR,BLOCKER"},
         )
         return int(r.json().get("totalRecords") or 0)
+
+    # ── QC rules (custodian; login token only) ────────────────────────────────
+    # Verified on sandbox dataflow 11468, 2026-11-13 (notes/api-notes.md, "QC
+    # rules"). Writes go through _schema_write: never retried, 5xx →
+    # SchemaWriteUncertainError. Bodies use the API's own keys; see
+    # RuleDefinition.to_body().
+
+    def get_rules(self, *, schema_id: str, dataflow_id: int) -> RuleSet:
+        """GET /rules/{schemaId}/dataflow/{dataflowId} — every QC rule of a schema.
+
+        Lists automatic and manual rules. *schema_id* is
+        :attr:`DesignDataset.schema_id`, not the dataset id.
+        """
+        self._require_login_token("get_rules")
+        r = self._http.get(f"/rules/{schema_id}/dataflow/{dataflow_id}")
+        return RuleSet.from_dict(r.json())
+
+    def create_rule(self, *, dataset_id: int, body: Mapping[str, Any]) -> None:
+        """PUT /rules/createNewRule — add a rule (yes, PUT).
+
+        The answer is empty: no rule id is returned. Find the rule afterwards
+        by its ``shortCode`` in :meth:`get_rules`.
+        """
+        self._schema_write("PUT", "/rules/createNewRule", "create_rule",
+                           params={"datasetId": dataset_id}, json=dict(body))
+
+    def update_rule(self, *, dataset_id: int, body: Mapping[str, Any]) -> None:
+        """PUT /rules/updateRule — replace a rule; also how it is enabled or disabled.
+
+        Send the whole body, with ``ruleId``
+        (:meth:`RuleDefinition.to_body <reportnet.RuleDefinition.to_body>`).
+        """
+        self._schema_write("PUT", "/rules/updateRule", "update_rule",
+                           params={"datasetId": dataset_id}, json=dict(body))
+
+    def delete_rule(self, *, dataset_id: int, rule_id: str) -> None:
+        """DELETE /rules/deleteRule — remove a rule.
+
+        ``datasetId`` is the numeric **dataset** id. The schema id, which the
+        web-app code suggests, answers 400 (sandbox, 2026-11-13).
+        """
+        self._schema_write("DELETE", "/rules/deleteRule", "delete_rule",
+                           params={"datasetId": dataset_id, "ruleId": rule_id})
+
+    def evaluate_sql_rule(self, *, dataset_id: int, sql: str) -> float | None:
+        """POST /rules/evaluateSqlRule — Reportnet's cost estimate for *sql*.
+
+        **Not a validity check:** it answered ``0.0`` for valid and invalid SQL
+        alike (sandbox, 2026-11-13). To find invalid rules, run
+        :meth:`validate_sql_rules` and read ``verified`` and ``sqlError``.
+        """
+        self._require_login_token("evaluate_sql_rule")
+        r = self._http.post("/rules/evaluateSqlRule", params={"datasetId": dataset_id},
+                            json={"sqlRule": sql})
+        text = r.text.strip()
+        return float(text) if text else None
+
+    def run_sql_rule(
+        self, *, dataset_id: int, sql: str, show_internal_fields: bool = False,
+        provider_code: str | None = None,
+    ) -> Any:
+        """POST /rules/runSqlRule — test-run *sql* and return the first rows.
+
+        The server wraps the query (``… as userSelect LIMIT 10``). Pass
+        *provider_code* to run it as that data provider. It reads; it does not
+        change rules or data.
+        """
+        self._require_login_token("run_sql_rule")
+        params: dict[str, Any] = {"datasetId": dataset_id,
+                                  "showInternalFields": str(show_internal_fields).lower()}
+        if provider_code is not None:
+            params["runSQLAsProvider"] = provider_code
+        r = self._http.post("/rules/runSqlRule", params=params, json={"sqlRule": sql})
+        return r.json() if r.text.strip() else None
+
+    def validate_sql_rules(self, *, dataset_id: int, schema_id: str) -> None:
+        """POST /rules/validateSqlRules — re-check every SQL rule of a dataset.
+
+        Afterwards each rule's ``verified`` (and ``sqlError``) is set; a new
+        rule is ``verified: null`` until this has run. The answer is empty.
+        """
+        self._schema_write("POST", "/rules/validateSqlRules", "validate_sql_rules",
+                           params={"datasetId": dataset_id, "datasetSchemaId": schema_id})
+
+    def get_rule_history(self, *, dataset_id: int, rule_id: str) -> list[dict[str, Any]]:
+        """GET /rules/historicInfo — earlier versions of a rule.
+
+        Answered ``[]`` on the sandbox even after three updates (2026-11-13).
+        """
+        self._require_login_token("get_rule_history")
+        r = self._http.get("/rules/historicInfo",
+                           params={"datasetId": dataset_id, "ruleId": rule_id})
+        return list(r.json() or [])
 
     def set_reference_dataset_updatable(
         self,

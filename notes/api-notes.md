@@ -408,3 +408,45 @@ table definition (`importFieldSchemas` answered 500 and added nothing),
 whole-schema export/import/copy, the dataset's reference and public flags,
 field types "Multiline text", "Email", "URL" and "Phone", and a Citus
 record-count route (the designer falls back to import statistics and warns).
+
+## QC rules (sandbox, dataflow 11468, 2026-11-13)
+
+From the Phase 0 probe (`scripts/probe_qc_rules.py`; record in
+`live-tests-qc-11468.json`) on scratch design dataset 48100, schema
+`6af5cce0c6dc4400014d1f72`, with a login token. All requests that answered 200
+are verified.
+
+| Operation | Request | Live result | Wrapped as |
+| --- | --- | --- | --- |
+| List rules | `GET /rules/{schemaId}/dataflow/{dataflowId}` | 200; spec §6 shape plus `hasHistoric`, `referenceFieldSchemaPKId`, `salience`, `whenConditionMethod` | `get_rules`; `QcDesigner.rules()` |
+| Create rule | `PUT /rules/createNewRule?datasetId={datasetId}`, the web-app body | 200, **empty body**: no rule id. Find the rule by `shortCode` | `create_rule`; `QcDesigner.add_sql_rule()` |
+| Update, enable, disable | `PUT /rules/updateRule?datasetId={datasetId}`, the web-app body with `ruleId` | 200, empty body; message and `enabled` read back as sent | `update_rule`; `QcDesigner.update_rule()`, `.enable()`, `.disable()` |
+| Delete rule | `DELETE /rules/deleteRule?datasetId={datasetId}&ruleId=` | 200 with the **numeric dataset id**. The schema id (which the web-app code suggests) gives **400** `NumberFormatException` | `delete_rule`; `QcDesigner.delete_rule()` |
+| Check SQL | `POST /rules/evaluateSqlRule?datasetId=` `{"sqlRule"}` | 200 with a bare number, `0.0`, **for valid and invalid SQL alike**. It is a cost estimate, not a validity check | `evaluate_sql_rule` (cost only) |
+| Test-run SQL | `POST /rules/runSqlRule?datasetId=&showInternalFields=false` `{"sqlRule"}` | **500, not conclusive.** The server dropped `dataset_48100.`, wrapped the query as `WITH Sites AS (SELECT SiteCode FROM Sites) SELECT * FROM (<sql>) as userSelect LIMIT 10 OFFSET 0` and ran it on Dremio, which answered "Object 'Sites' not found": the new design dataset has no data. On 33796 (part 2) it failed because of a Reportnet bug; see below | `run_sql_rule`; `QcDesigner.test_sql()` (not verified) |
+| Rule history | `GET /rules/historicInfo?datasetId=&ruleId=` | 200, `[]`, even after three updates | `get_rule_history` |
+| Validate all SQL rules | `POST /rules/validateSqlRules?datasetId=&datasetSchemaId=` | 200, empty body. Runs in the background. Afterwards the rule's `verified` was `true` (it was `null` before), **also for invalid SQL** (part 2) | `validate_sql_rules`; `QcDesigner.validate_all()` |
+| Write with an API key | – | **not verified**: no sandbox API key was stored (decision Q-04) | – |
+
+Other facts:
+
+- A new rule starts with `verified: null`, `sqlCost: null` and `sqlError: null`.
+  `sqlCost` became `0.0` after the first update; `verified` became `true` only
+  after "validate all".
+- The probe added table `Sites` (field `SiteCode`, the primary key) to scratch
+  dataset 48100. The rule was deleted; the 2 automatic rules of 48100 were not
+  touched.
+- **Part 2** (record in `live-tests-qc-11468-part2.json`): two rules with invalid SQL
+  (a syntax error, and an unknown table) were **accepted** by `createNewRule`.
+  `validateSqlRules` left them `verified: null` straight after the call; a moment
+  later both were **`verified: true` with no `sqlError`**. So neither
+  `evaluateSqlRule` nor `validateSqlRules` detects invalid SQL through the API, and
+  validation runs in the background. `verified` says that validation ran, not that
+  the SQL is valid.
+- `runSqlRule` on dataset 33796 (which holds data) answered **500 for both table-name
+  spellings**. The server prefixes the query with one CTE per table of the dataset,
+  with **unquoted column names** (`WITH Categories AS (SELECT Group,Depth,… FROM
+  Categories), …`). The column `Group` is a reserved word, so Dremio's parser fails
+  before the user's SQL runs. This is a Reportnet bug: `runSqlRule` cannot work on a
+  dataset with a reserved-word column. Still not known: whether it works elsewhere,
+  and whether table names in rule SQL are case-sensitive.
