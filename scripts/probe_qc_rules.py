@@ -9,7 +9,9 @@ dataset it may also add a "Sites" table and run "validate all SQL rules".
 Writes every request and answer to notes/live-tests-qc-11468.json, and refuses
 to write the file if it would contain a token or key.
 
-    uv run python scripts/probe_qc_rules.py
+    uv run python scripts/probe_qc_rules.py      # part 1: every endpoint once
+    uv run python scripts/probe_qc_rules.py 2    # part 2 (Q-08): invalid rules; runSqlRule
+                                                 # read-only on dataset 33796, which holds data
 """
 from __future__ import annotations
 
@@ -27,9 +29,12 @@ import reportnet
 DATAFLOW_ID = 11468
 DATASET_ID = 48100            # scratch dataset (Q-02); use 48099 only if the owner says so
 SCRATCH_DATASETS = {48100}    # the only datasets where a table may be added or all rules validated
-SHORT_CODE = "RNCLIENT_PROBE"
+SHORT_CODE = "RNCLIENT_PROBE"  # every probe rule's short code starts with this
 TABLE = "Sites"
-OUTPUT = Path(__file__).resolve().parents[1] / "notes" / "live-tests-qc-11468.json"
+READ_ONLY_DATASET = 33796     # part 2: holds data; only runSqlRule (a SELECT) is sent to it
+NOTES = Path(__file__).resolve().parents[1] / "notes"
+OUTPUT = NOTES / "live-tests-qc-11468.json"
+OUTPUT_PART2 = NOTES / "live-tests-qc-11468-part2.json"
 BODY_LIMIT = 20_000
 # The keys the web app sends for an SQL rule (spec §5).
 RULE_KEYS = ("ruleId", "automatic", "enabled", "type", "referenceId", "ruleName", "shortCode",
@@ -71,7 +76,8 @@ def probe_rules(probe: Probe, rules_path: str) -> list[dict[str, Any]]:
 
 
 def mine(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [r for r in rules if str(r.get("shortCode", "")).casefold() == SHORT_CODE.casefold()]
+    return [r for r in rules
+            if str(r.get("shortCode", "")).casefold().startswith(SHORT_CODE.casefold())]
 
 
 def rule_body(rule: dict[str, Any], **changes: Any) -> dict[str, Any]:
@@ -82,7 +88,8 @@ def rule_body(rule: dict[str, Any], **changes: Any) -> dict[str, Any]:
     return body
 
 
-def run(client: reportnet.ReportnetClient, probe: Probe, api_key_http: httpx.Client | None) -> None:
+def setup(client: reportnet.ReportnetClient, probe: Probe) -> tuple[Any, Any, str]:
+    """Find the dataset and table; stop if a probe rule is left over."""
     flow = client.for_dataflow(DATAFLOW_ID)
     ds = next((d for d in flow.get_design_datasets() if d.id == DATASET_ID), None)
     if ds is None:
@@ -100,7 +107,20 @@ def run(client: reportnet.ReportnetClient, probe: Probe, api_key_http: httpx.Cli
     rules_path = f"/rules/{ds.schema_id}/dataflow/{DATAFLOW_ID}"
     if mine(probe_rules(probe, rules_path)):
         raise Stop(f"a rule {SHORT_CODE} already exists; delete it in the web app first")
+    return ds, table, rules_path
 
+
+def new_rule(table_id: str, short_code: str, sql: str) -> dict[str, Any]:
+    return {"automatic": False, "enabled": True, "type": "TABLE", "referenceId": table_id,
+            "ruleName": "rnclient probe", "shortCode": short_code,
+            "description": "Temporary rule from scripts/probe_qc_rules.py",
+            "expressionText": None, "sqlSentence": sql,
+            "thenCondition": ["rnclient probe message", "INFO"], "whenCondition": None,
+            "integrityVO": None}
+
+
+def run(client: reportnet.ReportnetClient, probe: Probe, api_key_http: httpx.Client | None) -> None:
+    ds, table, rules_path = setup(client, probe)
     sql = f'SELECT * FROM dataset_{DATASET_ID}."{TABLE.lower()}" WHERE 1=0'
     evaluate = "/rules/evaluateSqlRule"
     probe.call("evaluate valid SQL", "POST", evaluate, params={"datasetId": DATASET_ID},
@@ -112,12 +132,7 @@ def run(client: reportnet.ReportnetClient, probe: Probe, api_key_http: httpx.Cli
                body={"sqlRule": "SELECT FROM nowhere WHERE"})
 
     try:
-        new = {"automatic": False, "enabled": True, "type": "TABLE", "referenceId": table.id,
-               "ruleName": "rnclient probe", "shortCode": SHORT_CODE,
-               "description": "Temporary rule from scripts/probe_qc_rules.py",
-               "expressionText": None, "sqlSentence": sql,
-               "thenCondition": ["rnclient probe message", "INFO"], "whenCondition": None,
-               "integrityVO": None}
+        new = new_rule(table.id, SHORT_CODE, sql)
         probe.call("create rule", "PUT", "/rules/createNewRule", params={"datasetId": DATASET_ID},
                    body=new)
         found = mine(probe_rules(probe, rules_path))
@@ -150,21 +165,54 @@ def run(client: reportnet.ReportnetClient, probe: Probe, api_key_http: httpx.Cli
         cleanup(probe, rules_path, ds.schema_id)
 
 
+def run_part2(client: reportnet.ReportnetClient, probe: Probe) -> None:
+    """Q-08: how invalid rules look after "validate all"; runSqlRule on a dataset with data."""
+    ds, table, rules_path = setup(client, probe)
+    invalid = {
+        f"{SHORT_CODE}_SYNTAX": f'SELECT * FROM dataset_{DATASET_ID}."{TABLE.lower()}" WHERE',
+        f"{SHORT_CODE}_NOTABLE": f'SELECT * FROM dataset_{DATASET_ID}."no_such_table"',
+    }
+    try:
+        for code, sql in invalid.items():
+            probe.call(f"create {code}", "PUT", "/rules/createNewRule",
+                       params={"datasetId": DATASET_ID}, body=new_rule(table.id, code, sql))
+        probe_rules(probe, rules_path)
+        probe.call("validate all SQL rules", "POST", "/rules/validateSqlRules",
+                   params={"datasetId": DATASET_ID, "datasetSchemaId": ds.schema_id})
+        probe_rules(probe, rules_path)
+    finally:
+        cleanup(probe, rules_path, ds.schema_id)
+
+    # Read-only: a SELECT test-run on a dataset that holds data. Nothing is written to it.
+    tables = client.get_schema(dataset_id=READ_ONLY_DATASET).tables
+    if not tables:
+        raise Stop(f"dataset {READ_ONLY_DATASET} has no tables")
+    name = tables[0].name
+    for label, quoted in (("lower case", name.lower()), ("as named", name)):
+        probe.call(f"run SQL on {READ_ONLY_DATASET}, {label}", "POST", "/rules/runSqlRule",
+                   params={"datasetId": READ_ONLY_DATASET, "showInternalFields": "false"},
+                   body={"sqlRule": f'SELECT * FROM dataset_{READ_ONLY_DATASET}."{quoted}"'})
+
+
 def cleanup(probe: Probe, rules_path: str, schema_id: str) -> None:
-    """Delete every RNCLIENT_PROBE rule; none existed when the run started."""
+    """Delete every probe rule; none existed when the run started.
+
+    Part 1 found that deleteRule needs the numeric dataset id (the schema id
+    gives 400), so that is tried first.
+    """
     for rule in mine(probe_rules(probe, rules_path)):
         rid = rule.get("ruleId")
-        status, _ = probe.call("delete rule (schema id)", "DELETE", "/rules/deleteRule",
-                               params={"datasetId": schema_id, "ruleId": rid})
+        status, _ = probe.call("delete rule (dataset id)", "DELETE", "/rules/deleteRule",
+                               params={"datasetId": DATASET_ID, "ruleId": rid})
         if status is None or status >= 300:
-            probe.call("delete rule (dataset id)", "DELETE", "/rules/deleteRule",
-                       params={"datasetId": DATASET_ID, "ruleId": rid})
+            probe.call("delete rule (schema id)", "DELETE", "/rules/deleteRule",
+                       params={"datasetId": schema_id, "ruleId": rid})
     left = mine(probe_rules(probe, rules_path))
     if left:
         raise Stop(f"{len(left)} {SHORT_CODE} rule(s) could not be deleted; delete in the web app")
 
 
-def write(probe: Probe, secrets: list[str]) -> bool:
+def write(probe: Probe, secrets: list[str], output: Path) -> bool:
     record = {"run_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
               "dataflow_id": DATAFLOW_ID, "dataset_id": DATASET_ID, "short_code": SHORT_CODE,
               "outcome": probe.outcome, "steps": probe.steps}
@@ -173,12 +221,16 @@ def write(probe: Probe, secrets: list[str]) -> bool:
         print("STOP: a token or key appears in the record; nothing was written. "
               "Log out of the web app to end the session.")
         return False
-    OUTPUT.write_text(text + "\n", encoding="utf-8")
-    print(f"record: {OUTPUT}")
+    output.write_text(text + "\n", encoding="utf-8")
+    print(f"record: {output}")
     return True
 
 
 def main() -> int:
+    part = sys.argv[1] if len(sys.argv) > 1 else "1"
+    if part not in {"1", "2"}:
+        print("Usage: probe_qc_rules.py [1|2]")
+        return 2
     access = os.environ.get("RN3_SANDBOX_ACCESS_TOKEN", "").strip()
     refresh = os.environ.get("RN3_SANDBOX_REFRESH_TOKEN", "").strip()
     if not access or not refresh:
@@ -186,15 +238,19 @@ def main() -> int:
         return 2
     client = reportnet.ReportnetClient.from_tokens(access, refresh, sandbox=True)
     api_key = ""
-    try:
-        api_key = reportnet.get_key(DATAFLOW_ID, sandbox=True)
-    except Exception:
-        print("  step 7 skipped: no sandbox API key in the keyring (Q-04)")
+    if part == "1":
+        try:
+            api_key = reportnet.get_key(DATAFLOW_ID, sandbox=True)
+        except Exception:
+            print("  step 7 skipped: no sandbox API key in the keyring (Q-04)")
     api_key_http = (reportnet.ReportnetClient(api_key, base_url=reportnet.SANDBOX_URL)._http._client
                     if api_key else None)
     probe = Probe(client._http._client)  # raw httpx client: records every answer without raising
     try:
-        run(client, probe, api_key_http)
+        if part == "1":
+            run(client, probe, api_key_http)
+        else:
+            run_part2(client, probe)
         probe.outcome = "completed"
     except Stop as exc:
         probe.outcome = f"stopped: {exc}"
@@ -204,7 +260,7 @@ def main() -> int:
         secrets = [access, refresh, api_key]
         if client.tokens is not None:
             secrets += [client.tokens.access_token, client.tokens.refresh_token]
-        if not write(probe, secrets):
+        if not write(probe, secrets, OUTPUT if part == "1" else OUTPUT_PART2):
             probe.outcome = "stopped: a secret appeared in an answer; record not written"
     print(f"OUTCOME: {probe.outcome}")
     return 0 if probe.outcome == "completed" else 1

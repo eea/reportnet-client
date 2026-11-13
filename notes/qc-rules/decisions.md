@@ -30,7 +30,12 @@ would answer differently.
   - Q-05: commit permission as stated; see the brief's ledger.
   - Q-06: WP0 and WP1 are ready.
 
-## Open (after the Phase 0 probe, 2026-11-13)
+## Answered 2026-11-13 ("agree"): Q-07, Q-08 and Q-09 as recommended
+
+WP2b and WP3 are ready. The validate-after-write design of Q-07 is used once
+WP2b confirms what an invalid rule looks like.
+
+## Asked after the Phase 0 probe (2026-11-13)
 
 | # | Question | Recommendation | Why |
 | --- | --- | --- | --- |
