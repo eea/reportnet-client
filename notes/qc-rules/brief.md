@@ -66,3 +66,4 @@ with each work package.
 | Granted | Action | Scope | By | Until |
 | --- | --- | --- | --- | --- |
 | 2026-11-13 | Commit, one commit per work package, owner's Git identity, no AI co-author line | branch `feat/qc-rules` only; no push, no pull request, no merge | Marc Ridler (Q-05) | the owner withdraws it |
+| 2026-11-13 | Rewrite the unpushed history of `feat/qc-rules` to redact server error details (internal host name, stack traces) from the probe records; fix the docs; extend the live test | branch `feat/qc-rules` only; no push | Marc Ridler ("Do those changes", after review) | used 2026-11-13 |

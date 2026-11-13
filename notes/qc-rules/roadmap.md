@@ -38,7 +38,13 @@ have been applied.
 | Q9 | met: 0 token-like strings in both probe records and the test log |
 
 Size: `src` about 520 new lines (budget 700); tests about 495 (budget 700);
-notes within budget. Passing these is not acceptance (R-64). Open: the
+notes within budget. Passing these is not acceptance (R-64).
+
+**After review (2026-11-13):** the probe records were redacted in the branch
+history (server error ids, an internal host name and stack traces); the probe
+script now redacts them itself. The custodian guide and API reference cover
+QC rules. The live test now also changes a rule's SQL and adds a RECORD rule,
+so **Q7 must be re-run** by the owner. Open: the
 owner's review, an independent reviewer, and permission to push and open a
 pull request.
 
