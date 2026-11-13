@@ -58,6 +58,7 @@ nav:
     - Client: api/client.md
     - Dataflow: api/dataflow-client.md
     - Schema design: api/schema-design.md
+    - QC rules: api/qc-design.md
     - Jobs: api/jobs.md
     - Data types: api/models.md
     - Errors: api/exceptions.md
