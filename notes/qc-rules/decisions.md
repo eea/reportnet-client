@@ -58,5 +58,11 @@ WP2b confirms what an invalid rule looks like.
 - **D-03, `deleteRule` takes the dataset id.** The probe found that the schema
   id gives 400 and the numeric dataset id works, so spec §4 note 2 is wrong.
   `delete_rule` sends `datasetId={dataset_id}`.
+- **D-05, `to_body()` sends the web app's keys only.** Spec §7.1 says to keep
+  unknown keys from `raw`. The probe verified only the web app's body
+  (spec §5), and GET adds `salience`, `hasHistoric`, `referenceFieldSchemaPKId`
+  and `whenConditionMethod`, which were never sent on a write. Sending only
+  the verified body is the safer choice; the schema-design project left the
+  same question open for LINK fields.
 - **D-04, create returns no id.** As spec §5 expected, the new rule is found
   by its `shortCode`.
