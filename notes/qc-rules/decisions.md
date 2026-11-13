@@ -30,6 +30,13 @@ would answer differently.
   - Q-05: commit permission as stated; see the brief's ledger.
   - Q-06: WP0 and WP1 are ready.
 
+## Answered 2026-11-13 ("agree"): Q-10, Q-11 and Q-12 as recommended
+
+- Q-10: D-06 is accepted, so the designer checks SQL client-side only.
+- Q-11: WP5 and WP6 are ready.
+- Q-12: the PM drafts a note to the Reportnet helpdesk about the two API
+  problems and does not send it (R-46).
+
 ## Answered 2026-11-13 ("agree"): Q-07, Q-08 and Q-09 as recommended
 
 WP2b and WP3 are ready. The validate-after-write design of Q-07 is used once
