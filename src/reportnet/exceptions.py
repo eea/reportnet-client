@@ -200,6 +200,24 @@ class SchemaDesignError(ReportnetError):
     """
 
 
+class QcRuleNotEditableError(SchemaDesignError):
+    """The rule is automatic or not an SQL rule, so this library does not change it.
+
+    Automatic rules go through a different endpoint, and expression and
+    relation rules have bodies this library does not build. Change them in the
+    web app.
+    """
+
+
+class QcSqlError(SchemaDesignError):
+    """Rule SQL was refused by the client's own check before anything was sent.
+
+    Reportnet itself does not check rule SQL through the API: rules with a syntax
+    error or an unknown table were accepted and marked ``verified: true``
+    (sandbox, 2026-11-13).
+    """
+
+
 class TableHasDataError(SchemaDesignError):
     """The table holds records, so its definition must not change.
 

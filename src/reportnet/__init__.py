@@ -17,6 +17,8 @@ from .exceptions import (
     JobFailedError,
     JobTimeoutError,
     LoginTokenError,
+    QcRuleNotEditableError,
+    QcSqlError,
     RateLimitError,
     ReadbackVerificationError,
     ReportnetError,
@@ -61,6 +63,7 @@ from .public_schema import (
     QcRule,
     get_public_schema,
 )
+from .qc_design import QcDesigner
 from .schema_design import SchemaDesigner
 from .viz import dataflow_to_mermaid
 
@@ -122,6 +125,9 @@ __all__ = [
     "DuplicateNameError",
     "SchemaDesignError",
     "LoginTokenError",
+    "QcDesigner",
+    "QcRuleNotEditableError",
+    "QcSqlError",
     "SchemaDesignNotPermittedError",
     "SchemaReadbackError",
     "SchemaWriteUncertainError",

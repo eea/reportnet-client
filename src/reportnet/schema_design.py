@@ -52,6 +52,7 @@ from .models import DatasetSchema, FieldSchema, FieldType, TableSchema
 
 if TYPE_CHECKING:
     from .dataflow import DataflowClient
+    from .qc_design import QcDesigner
 
 logger = get_logger(__name__)
 
@@ -136,6 +137,12 @@ class SchemaDesigner:
                 "if you are sure."
             )
         self._big_data = contents.info.big_data
+
+    @property
+    def qc(self) -> "QcDesigner":
+        """A :class:`~reportnet.QcDesigner` for this dataset's SQL QC rules."""
+        from .qc_design import QcDesigner
+        return QcDesigner(self._flow, self.dataset_id)
 
     # ── reading ───────────────────────────────────────────────────────────────
 

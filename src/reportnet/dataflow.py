@@ -45,6 +45,7 @@ from .models import (
 if TYPE_CHECKING:
     from ._util import CodelistResolution
     from .client import ReportnetClient
+    from .qc_design import QcDesigner
     from .schema_design import SchemaDesigner
 
 logger = get_logger(__name__)
@@ -479,6 +480,23 @@ class DataflowClient:
         return SchemaDesigner(
             self, dataset_id, allow_after_data_collection=allow_after_data_collection
         )
+
+    def qc(self, dataset_id: int) -> "QcDesigner":
+        """Return a :class:`~reportnet.QcDesigner` for one design dataset's SQL rules. **Admin.**
+
+        Refuses an API-key client and a dataset that is not a design dataset of
+        this dataflow. Reportnet does not check rule SQL; see
+        :mod:`reportnet.qc_design`.
+
+        Example::
+
+            qc = flow.qc(48100)
+            qc.add_sql_rule("SQL01", name="Site code exists", on="Sites",
+                            sql='SELECT * FROM dataset_48100."sites" WHERE sitecode IS NULL',
+                            message="Missing site code", severity="ERROR")
+        """
+        from .qc_design import QcDesigner
+        return QcDesigner(self, dataset_id)
 
     def get_test_datasets(self) -> list[TestDataset]:
         """Return all test datasets for this dataflow.

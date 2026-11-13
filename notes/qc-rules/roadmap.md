@@ -15,7 +15,7 @@ review and, if permitted, a commit.
 | WP2 | Owner runs the probe; PM records the findings in `notes/api-notes.md` | Q6, Q8, Q9 | **yes** | done 2026-11-13: completed; probe rule deleted; 0 token-like strings in the record; 7 endpoints verified, `runSqlRule` not conclusive, API-key write skipped |
 | WP2b | Second probe: how an invalid rule looks after "validate all"; test-run SQL read-only on a dataset with data (Q-08) | Q6, Q8, Q9 | **yes** | done 2026-11-13: completed; both rules deleted; 0 token-like strings; only `runSqlRule` reached 33796. Invalid SQL is not detected by the API (D-06); `runSqlRule` is broken on 33796 by a Reportnet bug (D-07) |
 | WP3 | Models and raw client methods (spec §7.1–7.2), shaped by the WP2 findings | Q1–Q4 | no | review: built and committed; 25 new tests; 399 passed, 63 skipped; ruff and mypy 0; src +213 lines, tests +135. `run_sql_rule`'s return value is not typed until WP2b shows its answer |
-| WP4 | `QcDesigner` with guards and read-back (spec §7.3) | Q1, Q2, Q5 | no | ready: guards as D-06 (client-side only) |
+| WP4 | `QcDesigner` with guards and read-back (spec §7.3) | Q1, Q2, Q5 | no | review: built and committed. 26 tests against an in-memory fake; switching off read-back fails 2, switching off the editable guard fails 6. 425 passed, 63 skipped; ruff and mypy 0; src +271 lines, tests +207 |
 | WP5 | Integration test, then the owner runs it | Q7, Q8, Q9 | **yes** | proposed |
 | WP6 | `CHANGELOG.md` and notes | Q6 | no | proposed |
 
