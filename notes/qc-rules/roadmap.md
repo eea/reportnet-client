@@ -44,7 +44,8 @@ notes within budget. Passing these is not acceptance (R-64).
 history (server error ids, an internal host name and stack traces); the probe
 script now redacts them itself. The custodian guide and API reference cover
 QC rules. The live test now also changes a rule's SQL and adds a RECORD rule,
-so **Q7 must be re-run** by the owner. Open: the
+so Q7 had to be re-run. **Re-run 2026-11-13 by the owner: passed** on 48100
+in 4.4 s ([log](it-run.log), local path removed); Q7 is met again. Open: the
 owner's review, an independent reviewer, and permission to push and open a
 pull request.
 
