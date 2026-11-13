@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,10 @@ NOTES = Path(__file__).resolve().parents[1] / "notes"
 OUTPUT = NOTES / "live-tests-qc-11468.json"
 OUTPUT_PART2 = NOTES / "live-tests-qc-11468-part2.json"
 BODY_LIMIT = 20_000
+# Server error text names internal hosts and carries stack traces after "[Error Id:".
+# The record is public, so everything from there to the end of the JSON string goes.
+_SERVER_DETAIL = re.compile(r'\[Error Id: (?:[^"\\]|\\.)*')
+_REDACTED = "[redacted: server error id, internal host name and stack trace]"
 # The keys the web app sends for an SQL rule (spec §5).
 RULE_KEYS = ("ruleId", "automatic", "enabled", "type", "referenceId", "ruleName", "shortCode",
              "description", "expressionText", "sqlSentence", "thenCondition", "whenCondition")
@@ -216,7 +221,7 @@ def write(probe: Probe, secrets: list[str], output: Path) -> bool:
     record = {"run_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
               "dataflow_id": DATAFLOW_ID, "dataset_id": DATASET_ID, "short_code": SHORT_CODE,
               "outcome": probe.outcome, "steps": probe.steps}
-    text = json.dumps(record, indent=2, ensure_ascii=False)
+    text = _SERVER_DETAIL.sub(_REDACTED, json.dumps(record, indent=2, ensure_ascii=False))
     if any(s and s in text for s in secrets):
         print("STOP: a token or key appears in the record; nothing was written. "
               "Log out of the web app to end the session.")
