@@ -128,6 +128,28 @@ class ReadbackVerificationError(ReportnetError):
                          "Inspect current data before retrying; uploads are not rolled back.")
 
 
+class LoginTokenError(AuthError):
+    """Reportnet refused to issue or renew a login token.
+
+    For a renewal this means the token pair is no longer valid: it expired, was
+    rotated by another client, or the web-app session ended. Reportnet answers
+    an invalid refresh token with HTTP 500, not 401 (sandbox, 2026-11-12).
+    Retrying does not help; a fresh pair from a new web-app login does.
+
+    The response body is never included, since it may echo a secret.
+    """
+
+    def __init__(self, status_code: int, path: str) -> None:
+        if path.endswith("/refreshToken"):
+            advice = (
+                "the login token pair is no longer valid. Log out of the Reportnet "
+                "web app, log in again and copy a fresh accessToken and refreshToken"
+            )
+        else:
+            advice = "check the username and password, or log in again in the web app"
+        super().__init__(status_code, f"POST {path} was refused: {advice}.")
+
+
 class SchemaDesignNotPermittedError(AuthError):
     """Schema design was attempted with an API key.
 

@@ -28,7 +28,7 @@ from typing import Callable, Generator
 import httpx
 
 from ._log import get_logger
-from .exceptions import AuthError
+from .exceptions import AuthError, LoginTokenError
 
 logger = get_logger(__name__)
 
@@ -115,15 +115,15 @@ def request_tokens(
 ) -> TokenPair:
     """POST to a Reportnet token endpoint and return the new token pair.
 
-    Raises :class:`AuthError` on any non-2xx answer. The response body is not
-    included in the error, since it may echo a secret.
+    Raises :class:`LoginTokenError` on any non-2xx answer. The response body is
+    not included in the error, since it may echo a secret.
     """
     _install_redaction()
     logger.debug("POST %s", path)
     with httpx.Client(base_url=base_url, timeout=timeout) as http:
         response = http.post(path, params=params)
     if response.status_code >= 400:
-        raise AuthError(response.status_code, f"POST {path} was refused")
+        raise LoginTokenError(response.status_code, path)
     return _parse_token_response(response)
 
 

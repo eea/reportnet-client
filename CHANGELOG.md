@@ -36,6 +36,12 @@ they are always listed under **Changed** with a migration note.
 
 ### Fixed
 
+- A login token that can no longer be renewed now raises `LoginTokenError`
+  (a subclass of `AuthError`), and the message says to log in again.
+  Before, `DataflowClient.get_dataflow_contents()` reported it as
+  `DiscoveryNotPermittedError` with advice about scoping reporter keys, and
+  `capabilities()` and `is_big_dataflow()` misread it as a key role. Reportnet
+  answers an invalid refresh token with HTTP 500.
 - `SANDBOX_URL` pointed at `https://sandbox.reportnet.europa.eu`, the sandbox
   *web app*, which answers API paths with an HTML page. It is now
   `https://sandbox-api.reportnet.europa.eu`. This also fixes

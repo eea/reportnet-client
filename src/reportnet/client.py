@@ -299,7 +299,7 @@ class ReportnetClient:
         if cached is not None:
             return cached
 
-        from .exceptions import AuthError
+        from .exceptions import AuthError, LoginTokenError
 
         can_read_dataflow = False
         can_read_representatives = False
@@ -307,10 +307,14 @@ class ReportnetClient:
             self.get_dataflow_contents(dataflow_id=dataflow_id)
             can_read_dataflow = True
             can_read_representatives = True  # custodian keys can read both
+        except LoginTokenError:
+            raise  # a dead token pair says nothing about the role
         except AuthError:
             try:
                 self._http.get(f"/representative/v1/dataflow/{dataflow_id}")
                 can_read_representatives = True
+            except LoginTokenError:
+                raise
             except AuthError:
                 pass
 
@@ -446,13 +450,15 @@ class ReportnetClient:
 
         Cached per client — a dataflow never changes backend.
         """
-        from .exceptions import AuthError
+        from .exceptions import AuthError, LoginTokenError
 
         cached = self._big_data_cache.get(dataflow_id)
         if cached is not None:
             return cached
         try:
             cached = self.get_dataflow_contents(dataflow_id=dataflow_id).info.big_data
+        except LoginTokenError:
+            raise
         except AuthError:
             logger.debug(
                 "dataflow %s not readable; reading bigData from getmetabase instead",

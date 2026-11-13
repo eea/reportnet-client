@@ -21,6 +21,7 @@ from .exceptions import (
     AuthError,
     CodelistResolutionError,
     DiscoveryNotPermittedError,
+    LoginTokenError,
     ReportnetError,
 )
 from .jobs import JobHandle, JobStatus
@@ -218,8 +219,8 @@ class DataflowClient:
         """
         try:
             return self._client.get_dataflow_contents(dataflow_id=self._dataflow_id)
-        except DiscoveryNotPermittedError:
-            raise
+        except (DiscoveryNotPermittedError, LoginTokenError):
+            raise  # a dead login token is not a key-scope problem
         except AuthError as exc:
             if self._provider_id is None:
                 raise DiscoveryNotPermittedError(
@@ -233,6 +234,8 @@ class DataflowClient:
                 return self._client.get_dataflow_contents(
                     dataflow_id=self._dataflow_id, provider_id=self._provider_id
                 )
+            except LoginTokenError:
+                raise
             except AuthError as scoped_exc:
                 raise DiscoveryNotPermittedError(
                     scoped_exc.status_code, self._discovery_hint()
