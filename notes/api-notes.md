@@ -408,3 +408,35 @@ table definition (`importFieldSchemas` answered 500 and added nothing),
 whole-schema export/import/copy, the dataset's reference and public flags,
 field types "Multiline text", "Email", "URL" and "Phone", and a Citus
 record-count route (the designer falls back to import statistics and warns).
+
+## QC rules (sandbox, dataflow 11468, 2026-11-13)
+
+From the Phase 0 probe (`scripts/probe_qc_rules.py`; record in
+`live-tests-qc-11468.json`) on scratch design dataset 48100, schema
+`6af5cce0c6dc4400014d1f72`, with a login token. All requests that answered 200
+are verified. "Wrapped as" is filled in when the client method exists.
+
+| Operation | Request | Live result | Wrapped as |
+| --- | --- | --- | --- |
+| List rules | `GET /rules/{schemaId}/dataflow/{dataflowId}` | 200; spec §6 shape plus `hasHistoric`, `referenceFieldSchemaPKId`, `salience`, `whenConditionMethod` | – |
+| Create rule | `PUT /rules/createNewRule?datasetId={datasetId}`, the web-app body | 200, **empty body**: no rule id. Find the rule by `shortCode` | – |
+| Update, enable, disable | `PUT /rules/updateRule?datasetId={datasetId}`, the web-app body with `ruleId` | 200, empty body; message and `enabled` read back as sent | – |
+| Delete rule | `DELETE /rules/deleteRule?datasetId={datasetId}&ruleId=` | 200 with the **numeric dataset id**. The schema id (which the web-app code suggests) gives **400** `NumberFormatException` | – |
+| Check SQL | `POST /rules/evaluateSqlRule?datasetId=` `{"sqlRule"}` | 200 with a bare number, `0.0`, **for valid and invalid SQL alike**. It is a cost estimate, not a validity check | – |
+| Test-run SQL | `POST /rules/runSqlRule?datasetId=&showInternalFields=false` `{"sqlRule"}` | **500, not conclusive.** The server dropped `dataset_48100.`, wrapped the query as `WITH Sites AS (SELECT SiteCode FROM Sites) SELECT * FROM (<sql>) as userSelect LIMIT 10 OFFSET 0` and ran it on Dremio, which answered "Object 'Sites' not found": the new design dataset has no data | – |
+| Rule history | `GET /rules/historicInfo?datasetId=&ruleId=` | 200, `[]`, even after three updates | – |
+| Validate all SQL rules | `POST /rules/validateSqlRules?datasetId=&datasetSchemaId=` | 200, empty body. Afterwards the rule's `verified` was `true` (it was `null` before) | – |
+| Write with an API key | – | **not verified**: no sandbox API key was stored (decision Q-04) | – |
+
+Other facts:
+
+- A new rule starts with `verified: null`, `sqlCost: null` and `sqlError: null`.
+  `sqlCost` became `0.0` after the first update; `verified` became `true` only
+  after "validate all".
+- The probe added table `Sites` (field `SiteCode`, the primary key) to scratch
+  dataset 48100. The rule was deleted; the 2 automatic rules of 48100 were not
+  touched.
+- Not yet known: how an **invalid** rule shows up (`verified: false` and a
+  `sqlError` message, presumably, after "validate all"), whether `runSqlRule`
+  works on a dataset that holds data, and whether table names in rule SQL
+  are case-sensitive.

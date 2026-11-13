@@ -30,6 +30,14 @@ would answer differently.
   - Q-05: commit permission as stated; see the brief's ledger.
   - Q-06: WP0 and WP1 are ready.
 
+## Open (after the Phase 0 probe, 2026-11-13)
+
+| # | Question | Recommendation | Why |
+| --- | --- | --- | --- |
+| Q-07 | `evaluateSqlRule` returns `0.0` for invalid SQL too, so the `check_sql` guard of spec §7.3 cannot work. What replaces it? | `add_sql_rule(..., validate=True)`: after the write, call "validate all", read the rule back and raise `QcSqlError` with its `sqlError` if it is not verified. The rule stays in place, and the error says so. `evaluate_sql_rule` stays as a raw method that returns the cost | "Validate all" is the only call seen to change `verified`. It also re-checks the dataset's other rules, which is what the web app's validate button does |
+| Q-08 | Run a second small probe (WP2b) before relying on Q-07? | Yes, on 48100: create a rule with invalid SQL, validate all, record `verified` and `sqlError`, delete it. In the same run, test-run SQL **read-only** on a dataset that holds data (33796 "Reference data", `LIMIT 10`, no writes), with the table name in both cases | Q-07 assumes what an invalid rule looks like, and the test-run result was not conclusive |
+| Q-09 | Start WP3 (models and raw client methods) now? | Yes | Offline; nothing in WP3 depends on the open points |
+
 ## Settled by the evidence
 
 - **D-01, `Severity` is `(str, Enum)`, not `StrEnum`.** `pyproject.toml`
@@ -42,3 +50,8 @@ would answer differently.
   `SchemaDesignNotPermittedError`, `SchemaDesignError`, `DuplicateNameError`,
   `SchemaReadbackError`, `SchemaWriteUncertainError`,
   `public_schema._SQL_START` and `get_dataset_metabase`.
+- **D-03, `deleteRule` takes the dataset id.** The probe found that the schema
+  id gives 400 and the numeric dataset id works, so spec §4 note 2 is wrong.
+  `delete_rule` sends `datasetId={dataset_id}`.
+- **D-04, create returns no id.** As spec §5 expected, the new rule is found
+  by its `shortCode`.
