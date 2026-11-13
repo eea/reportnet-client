@@ -58,6 +58,18 @@ WP2b confirms what an invalid rule looks like.
 - **D-03, `deleteRule` takes the dataset id.** The probe found that the schema
   id gives 400 and the numeric dataset id works, so spec §4 note 2 is wrong.
   `delete_rule` sends `datasetId={dataset_id}`.
+- **D-06, the API cannot check SQL; replaces Q-07 (WP2b, 2026-11-13).** Two
+  rules with invalid SQL were accepted, and "validate all" marked them
+  `verified: true` with no `sqlError`. `QcDesigner` therefore guards only
+  client-side (SQL starts with `SELECT` or `WITH`, a valid severity, a unique
+  short code). Its documentation says that Reportnet does not check the SQL.
+  There is no `check_sql` and no `validate=True`; `validate_all()` stays as a
+  documented pass-through. The owner may still object; nothing else was
+  possible.
+- **D-07, `runSqlRule` stays wrapped but not verified.** On 33796 it fails
+  because of Reportnet's own query wrapper (an unquoted reserved-word column,
+  `Group`). `QcDesigner.test_sql()` passes the call through, and its
+  documentation names this limit.
 - **D-05, `to_body()` sends the web app's keys only.** Spec §7.1 says to keep
   unknown keys from `raw`. The probe verified only the web app's body
   (spec §5), and GET adds `salience`, `hasHistoric`, `referenceFieldSchemaPKId`

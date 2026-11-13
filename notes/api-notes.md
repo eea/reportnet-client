@@ -436,7 +436,17 @@ Other facts:
 - The probe added table `Sites` (field `SiteCode`, the primary key) to scratch
   dataset 48100. The rule was deleted; the 2 automatic rules of 48100 were not
   touched.
-- Not yet known: how an **invalid** rule shows up (`verified: false` and a
-  `sqlError` message, presumably, after "validate all"), whether `runSqlRule`
-  works on a dataset that holds data, and whether table names in rule SQL
-  are case-sensitive.
+- **Part 2** (record in `live-tests-qc-11468-part2.json`): two rules with invalid SQL
+  (a syntax error, and an unknown table) were **accepted** by `createNewRule`.
+  `validateSqlRules` left them `verified: null` straight after the call; a moment
+  later both were **`verified: true` with no `sqlError`**. So neither
+  `evaluateSqlRule` nor `validateSqlRules` detects invalid SQL through the API, and
+  validation runs in the background. `verified` says that validation ran, not that
+  the SQL is valid.
+- `runSqlRule` on dataset 33796 (which holds data) answered **500 for both table-name
+  spellings**. The server prefixes the query with one CTE per table of the dataset,
+  with **unquoted column names** (`WITH Categories AS (SELECT Group,Depth,… FROM
+  Categories), …`). The column `Group` is a reserved word, so Dremio's parser fails
+  before the user's SQL runs. This is a Reportnet bug: `runSqlRule` cannot work on a
+  dataset with a reserved-word column. Still not known: whether it works elsewhere,
+  and whether table names in rule SQL are case-sensitive.
